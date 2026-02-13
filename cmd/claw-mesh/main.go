@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -72,6 +73,10 @@ func newUpCmd() *cobra.Command {
 				cfg.Coordinator.Port = p
 			}
 
+			if ap, _ := cmd.Flags().GetBool("allow-private"); ap {
+				cfg.Coordinator.AllowPrivate = true
+			}
+
 			srv := coordinator.NewServer(&cfg.Coordinator)
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -90,6 +95,7 @@ func newUpCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().Int("port", 0, "coordinator listen port (default: 9180)")
+	cmd.Flags().Bool("allow-private", false, "allow private/loopback IPs for node endpoints")
 	return cmd
 }
 
@@ -122,6 +128,15 @@ func newJoinCmd() *cobra.Command {
 			endpoint := listen
 			if endpoint == "" {
 				endpoint = ":9121"
+			}
+
+			// If endpoint has no host (just :port), detect the outbound IP
+			// so the coordinator knows how to reach this node.
+			host, port, _ := net.SplitHostPort(endpoint)
+			if host == "" {
+				if outIP := detectOutboundIP(); outIP != "" {
+					endpoint = net.JoinHostPort(outIP, port)
+				}
 			}
 
 			if name == "" {
@@ -417,6 +432,17 @@ func resolveToken(cmd *cobra.Command, cfg *config.Config) string {
 		return env
 	}
 	return ""
+}
+
+// detectOutboundIP finds the preferred outbound IP by dialing a UDP socket.
+func detectOutboundIP() string {
+	conn, err := net.Dial("udp4", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	addr := conn.LocalAddr().(*net.UDPAddr)
+	return addr.IP.String()
 }
 
 func fetchNodes(base, token string) ([]*types.Node, error) {

@@ -27,7 +27,7 @@ cd claw-mesh && make build
 ./bin/claw-mesh up --port 9180 --token mysecret
 
 # Join from another machine (or another terminal)
-./bin/claw-mesh join http://coordinator:9180 --name mac-mini --tags xcode,local --token mysecret
+./bin/claw-mesh join http://<coordinator-ip>:9180 --name mac-mini --tags xcode,local --token mysecret
 ```
 
 Open `http://localhost:9180` for the web dashboard.
