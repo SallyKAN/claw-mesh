@@ -36,7 +36,7 @@ type MatchCriteria struct {
 	RequiresGPU   *bool  `json:"requires_gpu,omitempty" yaml:"requires_gpu,omitempty"`
 	RequiresOS    string `json:"requires_os,omitempty" yaml:"requires_os,omitempty"`
 	RequiresSkill string `json:"requires_skill,omitempty" yaml:"requires_skill,omitempty"`
-	Wildcard      bool   `json:"wildcard,omitempty" yaml:"wildcard,omitempty"`
+	Wildcard      *bool  `json:"wildcard,omitempty" yaml:"wildcard,omitempty"`
 }
 
 // RoutingRule defines how messages are routed to nodes.
