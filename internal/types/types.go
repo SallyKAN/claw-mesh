@@ -80,3 +80,12 @@ type RegisterResponse struct {
 type HeartbeatRequest struct {
 	Status NodeStatus `json:"status"`
 }
+
+// ValidNodeStatus reports whether s is a known node status value.
+func ValidNodeStatus(s NodeStatus) bool {
+	switch s {
+	case NodeStatusOnline, NodeStatusOffline, NodeStatusBusy:
+		return true
+	}
+	return false
+}

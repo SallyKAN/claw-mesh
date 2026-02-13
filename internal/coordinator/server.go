@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/snapek/claw-mesh/internal/config"
 	"github.com/snapek/claw-mesh/internal/types"
 )
+
+const maxRequestBody = 1 << 20 // 1 MB
 
 // Server is the coordinator HTTP server.
 type Server struct {
@@ -33,14 +36,18 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/nodes/register", s.handleRegister)
-	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.handleDeregister)
+	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.requireAuth(s.handleDeregister))
 	mux.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 	mux.HandleFunc("GET /api/v1/nodes/{id}", s.handleGetNode)
-	mux.HandleFunc("POST /api/v1/nodes/{id}/heartbeat", s.handleHeartbeat)
+	mux.HandleFunc("POST /api/v1/nodes/{id}/heartbeat", s.requireAuth(s.handleHeartbeat))
 
 	s.http = &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	return s
@@ -48,9 +55,13 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 
 // Start begins serving and the health checker. Blocks until the server stops.
 func (s *Server) Start() error {
+	ln, err := net.Listen("tcp", s.http.Addr)
+	if err != nil {
+		return err
+	}
 	s.health.Start()
 	log.Printf("coordinator listening on %s", s.http.Addr)
-	return s.http.ListenAndServe()
+	return s.http.Serve(ln)
 }
 
 // Shutdown gracefully stops the server.
@@ -59,9 +70,38 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
 }
 
+// requireAuth wraps a handler to enforce Bearer token auth on mutating endpoints.
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Token == "" {
+			next(w, r)
+			return
+		}
+		const prefix = "Bearer "
+		auth := r.Header.Get("Authorization")
+		if len(auth) <= len(prefix) || auth[:len(prefix)] != prefix {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid authorization header"})
+			return
+		}
+		if auth[len(prefix):] != s.cfg.Token {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+			return
+		}
+		next(w, r)
+	}
+}
+
+// decodeJSON reads a JSON body with size limit and strict field checking.
+func decodeJSON(r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, maxRequestBody)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req types.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -71,8 +111,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	id, err := generateID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate node ID"})
+		return
+	}
+
 	node := &types.Node{
-		ID:            generateID(),
+		ID:            id,
 		Name:          req.Name,
 		Endpoint:      req.Endpoint,
 		Capabilities:  req.Capabilities,
@@ -88,6 +134,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	log.Printf("node registered: %s (%s) at %s", node.ID, node.Name, node.Endpoint)
 	writeJSON(w, http.StatusCreated, types.RegisterResponse{
 		NodeID: node.ID,
+		Token:  s.cfg.Token,
 	})
 }
 
@@ -118,12 +165,17 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req types.HeartbeatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if !s.health.RecordHeartbeat(id, req.Status) {
+	if !types.ValidNodeStatus(req.Status) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid status value"})
+		return
+	}
+
+	if !s.registry.RecordHeartbeat(id, req.Status) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "node not found"})
 		return
 	}
