@@ -58,6 +58,14 @@ func copyNode(n *types.Node) *types.Node {
 	return &cp
 }
 
+// Exists reports whether a node with the given ID is registered.
+func (r *Registry) Exists(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.nodes[id]
+	return ok
+}
+
 // Get returns a deep copy of a node by ID, or nil if not found.
 func (r *Registry) Get(id string) *types.Node {
 	r.mu.RLock()
