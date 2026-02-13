@@ -11,8 +11,10 @@ type HealthChecker struct {
 	timeout  time.Duration
 	interval time.Duration
 
-	stopOnce sync.Once
-	stopCh   chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
+	stopCh    chan struct{}
+	done      chan struct{}
 }
 
 // NewHealthChecker creates a health checker.
@@ -24,22 +26,28 @@ func NewHealthChecker(registry *Registry, timeout, interval time.Duration) *Heal
 		timeout:  timeout,
 		interval: interval,
 		stopCh:   make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
 // Start begins the background health check loop.
+// Safe to call multiple times; only the first call starts the loop.
 func (h *HealthChecker) Start() {
-	go h.loop()
+	h.startOnce.Do(func() {
+		go h.loop()
+	})
 }
 
-// Stop terminates the health check loop.
+// Stop terminates the health check loop and waits for it to finish.
 func (h *HealthChecker) Stop() {
 	h.stopOnce.Do(func() {
 		close(h.stopCh)
 	})
+	<-h.done
 }
 
 func (h *HealthChecker) loop() {
+	defer close(h.done)
 	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
 	for {

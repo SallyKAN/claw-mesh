@@ -81,6 +81,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // requireAuth wraps a handler to enforce Bearer token auth on mutating endpoints.
+// Accepts the coordinator admin token or any valid per-node token.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.Token == "" {
@@ -93,7 +94,8 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid authorization header"})
 			return
 		}
-		if auth[len(prefix):] != s.cfg.Token {
+		token := auth[len(prefix):]
+		if token != s.cfg.Token && !s.registry.ValidateNodeToken(token) {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
 			return
 		}
@@ -102,16 +104,24 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // decodeJSON reads a JSON body with size limit and strict field checking.
-func decodeJSON(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxRequestBody)
+// It rejects requests with trailing data after the JSON value.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	// Reject trailing garbage.
+	if dec.More() {
+		return fmt.Errorf("unexpected data after JSON value")
+	}
+	return nil
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req types.RegisterRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -124,6 +134,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	id, err := generateUniqueID(s.registry.Exists)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate node ID"})
+		return
+	}
+
+	nodeToken, err := generateToken()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate node token"})
 		return
 	}
 
@@ -140,11 +156,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	s.registry.SetNodeToken(node.ID, nodeToken)
 
 	log.Printf("node registered: %s (%s) at %s", node.ID, node.Name, node.Endpoint)
 	writeJSON(w, http.StatusCreated, types.RegisterResponse{
 		NodeID: node.ID,
-		Token:  s.cfg.Token,
+		Token:  nodeToken,
 	})
 }
 
@@ -175,7 +192,7 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req types.HeartbeatRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}

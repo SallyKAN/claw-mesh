@@ -11,14 +11,16 @@ import (
 
 // Registry manages the set of known nodes.
 type Registry struct {
-	mu    sync.RWMutex
-	nodes map[string]*types.Node
+	mu         sync.RWMutex
+	nodes      map[string]*types.Node
+	nodeTokens map[string]string // nodeID -> per-node token
 }
 
 // NewRegistry creates an empty node registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		nodes: make(map[string]*types.Node),
+		nodes:      make(map[string]*types.Node),
+		nodeTokens: make(map[string]string),
 	}
 }
 
@@ -41,7 +43,27 @@ func (r *Registry) Remove(id string) bool {
 		return false
 	}
 	delete(r.nodes, id)
+	delete(r.nodeTokens, id)
 	return true
+}
+
+// SetNodeToken stores a per-node authentication token.
+func (r *Registry) SetNodeToken(nodeID, token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nodeTokens[nodeID] = token
+}
+
+// ValidateNodeToken checks whether the given token matches the stored per-node token.
+func (r *Registry) ValidateNodeToken(token string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, t := range r.nodeTokens {
+		if t == token {
+			return true
+		}
+	}
+	return false
 }
 
 // copyNode returns a deep copy of a Node.

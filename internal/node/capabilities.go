@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -95,6 +96,7 @@ func discoverSkills() []string {
 		skills = append(skills, "openclaw-gateway")
 	}
 
+	sort.Strings(skills)
 	return skills
 }
 

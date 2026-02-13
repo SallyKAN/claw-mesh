@@ -26,9 +26,11 @@ type Agent struct {
 	nodeID string
 	client *http.Client
 
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	done     chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
+	stopCh    chan struct{}
+	done      chan struct{}
+	started   bool
 }
 
 // AgentConfig holds the parameters needed to create an Agent.
@@ -107,8 +109,12 @@ func (a *Agent) Register() error {
 }
 
 // StartHeartbeat begins sending periodic heartbeats to the coordinator.
+// Safe to call multiple times; only the first call starts the loop.
 func (a *Agent) StartHeartbeat() {
-	go a.heartbeatLoop()
+	a.startOnce.Do(func() {
+		a.started = true
+		go a.heartbeatLoop()
+	})
 }
 
 func (a *Agent) heartbeatLoop() {
@@ -161,13 +167,16 @@ func (a *Agent) sendHeartbeat() error {
 }
 
 // Shutdown deregisters the node and stops the heartbeat loop.
+// Safe to call even if StartHeartbeat was never called.
 func (a *Agent) Shutdown() {
 	a.stopOnce.Do(func() {
 		close(a.stopCh)
 	})
 
-	// Wait for heartbeat loop to finish.
-	<-a.done
+	// Only wait for heartbeat loop if it was started.
+	if a.started {
+		<-a.done
+	}
 
 	// Deregister from coordinator.
 	if a.nodeID != "" {
@@ -192,5 +201,9 @@ func (a *Agent) deregister() {
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		log.Printf("deregister returned unexpected status %d for node %s", resp.StatusCode, a.nodeID)
+		return
+	}
 	log.Printf("deregistered node %s", a.nodeID)
 }

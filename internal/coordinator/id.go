@@ -23,6 +23,15 @@ func generateID() (string, error) {
 	return "", fmt.Errorf("generating node ID after %d attempts: %w", maxIDRetries, lastErr)
 }
 
+// generateToken creates a random token for per-node authentication.
+func generateToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating token: %w", err)
+	}
+	return fmt.Sprintf("%x", b), nil
+}
+
 // generateUniqueID generates an ID that doesn't collide with existing keys.
 // exists is a function that returns true if the ID is already taken.
 func generateUniqueID(exists func(string) bool) (string, error) {

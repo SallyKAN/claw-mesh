@@ -102,6 +102,9 @@ func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 					return n, nil
 				}
 			}
+			// Explicit target didn't match any candidate — skip this rule
+			// instead of silently falling back to leastBusy.
+			continue
 		}
 		return leastBusy(candidates), nil
 	}

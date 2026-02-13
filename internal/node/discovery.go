@@ -1,12 +1,15 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // GatewayInfo holds discovered OpenClaw Gateway details.
@@ -77,9 +80,11 @@ func discoverFromProcess() (*GatewayInfo, error) {
 		return nil, fmt.Errorf("openclaw binary not found: %w", err)
 	}
 
-	// Try to get version.
+	// Try to get version with a 5s timeout.
 	var version string
-	out, err := exec.Command(path, "version").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "version").Output()
 	if err == nil {
 		version = strings.TrimSpace(string(out))
 	}
@@ -93,16 +98,34 @@ func discoverFromProcess() (*GatewayInfo, error) {
 		data, err := os.ReadFile(pf)
 		if err == nil {
 			port := strings.TrimSpace(string(data))
-			return &GatewayInfo{
-				Endpoint: "127.0.0.1:" + port,
-				Version:  version,
-			}, nil
+			endpoint := "127.0.0.1:" + port
+			if verifyGatewayRunning(endpoint) {
+				return &GatewayInfo{
+					Endpoint: endpoint,
+					Version:  version,
+				}, nil
+			}
 		}
 	}
 
-	// Default endpoint.
-	return &GatewayInfo{
-		Endpoint: "127.0.0.1:9120",
-		Version:  version,
-	}, nil
+	// Default endpoint — only return if gateway is actually reachable.
+	defaultEndpoint := "127.0.0.1:9120"
+	if verifyGatewayRunning(defaultEndpoint) {
+		return &GatewayInfo{
+			Endpoint: defaultEndpoint,
+			Version:  version,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("openclaw binary found but gateway not running")
+}
+
+// verifyGatewayRunning checks if a TCP connection can be made to the endpoint.
+func verifyGatewayRunning(endpoint string) bool {
+	conn, err := net.DialTimeout("tcp", endpoint, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }

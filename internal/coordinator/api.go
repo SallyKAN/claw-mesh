@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -14,7 +15,7 @@ func (s *Server) handleRouteAuto(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 		Source  string `json:"source"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -58,7 +59,7 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 		Source  string `json:"source"`
 	}
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -83,7 +84,15 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 
 	node, err := s.router.Route(msg)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		// Use 502 for offline nodes, 503 for unavailable, 404 for not found.
+		n := s.registry.Get(nodeID)
+		if n == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		} else if n.Status == types.NodeStatusOffline {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		}
 		return
 	}
 
@@ -103,8 +112,13 @@ func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
 // handleAddRule handles POST /api/v1/rules.
 func (s *Server) handleAddRule(w http.ResponseWriter, r *http.Request) {
 	var rule types.RoutingRule
-	if err := decodeJSON(r, &rule); err != nil {
+	if err := decodeJSON(w, r, &rule); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if err := validateRule(&rule); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -126,4 +140,38 @@ func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("routing rule deleted: %s", id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// validStrategies lists the accepted routing strategy values.
+var validStrategies = map[string]bool{
+	"":           true,
+	"least-busy": true,
+}
+
+// validateRule checks a routing rule for invalid or contradictory fields.
+func validateRule(rule *types.RoutingRule) error {
+	isWild := rule.Match.Wildcard != nil && *rule.Match.Wildcard
+	hasCriteria := rule.Match.RequiresGPU != nil || rule.Match.RequiresOS != "" || rule.Match.RequiresSkill != ""
+
+	// Reject empty criteria (no match fields at all).
+	if !isWild && !hasCriteria {
+		return fmt.Errorf("rule must have at least one match criterion or be a wildcard")
+	}
+
+	// Reject wildcard combined with specific criteria.
+	if isWild && hasCriteria {
+		return fmt.Errorf("wildcard rule cannot have other match criteria")
+	}
+
+	// Reject wildcard combined with a specific target.
+	if isWild && rule.Target != "" {
+		return fmt.Errorf("wildcard rule cannot specify a target node")
+	}
+
+	// Validate strategy value.
+	if !validStrategies[rule.Strategy] {
+		return fmt.Errorf("invalid strategy %q; valid values: least-busy", rule.Strategy)
+	}
+
+	return nil
 }
