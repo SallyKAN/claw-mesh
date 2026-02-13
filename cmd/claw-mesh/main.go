@@ -9,6 +9,7 @@ import (
 
 	"github.com/snapek/claw-mesh/internal/config"
 	"github.com/snapek/claw-mesh/internal/coordinator"
+	"github.com/snapek/claw-mesh/internal/node"
 	"github.com/spf13/cobra"
 )
 
@@ -88,17 +89,70 @@ func newJoinCmd() *cobra.Command {
 		Short: "Join a mesh as a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := loadConfig(cmd)
+			cfg, err := loadConfig(cmd)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "joining mesh at %s\n", args[0])
-			// TODO: start node agent (Phase 3)
+
+			coordinatorURL := args[0]
+			name, _ := cmd.Flags().GetString("name")
+			tags, _ := cmd.Flags().GetStringSlice("tags")
+			token, _ := cmd.Flags().GetString("token")
+
+			// Flags override config values.
+			if name == "" {
+				name = cfg.Node.Name
+			}
+			if len(tags) == 0 {
+				tags = cfg.Node.Tags
+			}
+			if token == "" {
+				token = cfg.Coordinator.Token
+			}
+
+			// Auto-detect endpoint if not configured.
+			endpoint := cfg.Node.Endpoint
+			if endpoint == "" {
+				if gw, err := node.DiscoverGateway(); err == nil {
+					endpoint = gw.Endpoint
+				} else {
+					endpoint = "127.0.0.1:9120"
+				}
+			}
+
+			// Default name to hostname.
+			if name == "" {
+				name, _ = os.Hostname()
+			}
+
+			agent := node.NewAgent(node.AgentConfig{
+				CoordinatorURL: coordinatorURL,
+				Token:          token,
+				Name:           name,
+				Endpoint:       endpoint,
+				Tags:           tags,
+			})
+
+			fmt.Fprintf(os.Stderr, "joining mesh at %s as %q\n", coordinatorURL, name)
+
+			if err := agent.Register(); err != nil {
+				return err
+			}
+			agent.StartHeartbeat()
+
+			// Block until SIGINT/SIGTERM.
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+			<-ctx.Done()
+
+			fmt.Fprintln(os.Stderr, "shutting down node agent...")
+			agent.Shutdown()
 			return nil
 		},
 	}
 	cmd.Flags().String("name", "", "node display name")
 	cmd.Flags().StringSlice("tags", nil, "capability tags")
+	cmd.Flags().String("token", "", "coordinator auth token")
 	return cmd
 }
 
