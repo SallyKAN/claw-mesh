@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/snapek/claw-mesh/internal/config"
+	"github.com/snapek/claw-mesh/internal/coordinator"
 	"github.com/spf13/cobra"
 )
 
@@ -50,9 +54,28 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "starting coordinator on :%d\n", cfg.Coordinator.Port)
-			// TODO: start coordinator server (Phase 2)
-			return nil
+
+			// Override port from flag if set.
+			if p, _ := cmd.Flags().GetInt("port"); p != 0 {
+				cfg.Coordinator.Port = p
+			}
+
+			srv := coordinator.NewServer(&cfg.Coordinator)
+
+			// Graceful shutdown on SIGINT/SIGTERM.
+			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
+
+			errCh := make(chan error, 1)
+			go func() { errCh <- srv.Start() }()
+
+			select {
+			case <-ctx.Done():
+				fmt.Fprintln(os.Stderr, "shutting down coordinator...")
+				return srv.Shutdown(context.Background())
+			case err := <-errCh:
+				return err
+			}
 		},
 	}
 	cmd.Flags().Int("port", 0, "coordinator listen port (default: 9180)")
