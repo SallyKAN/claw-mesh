@@ -13,13 +13,13 @@ const maxNodeRequestBody = 1 << 20 // 1 MB
 
 // Handler serves the node-side HTTP API for receiving forwarded messages.
 type Handler struct {
-	token string
+	token *string
 	mux   *http.ServeMux
 }
 
 // NewHandler creates a node message handler.
 // If token is non-empty, all requests must carry a matching Bearer token.
-func NewHandler(token string) *Handler {
+func NewHandler(token *string) *Handler {
 	h := &Handler{
 		token: token,
 		mux:   http.NewServeMux(),
@@ -36,7 +36,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // requireAuth enforces Bearer token auth on the node handler.
 func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if h.token == "" {
+		if h.token == nil || *h.token == "" {
 			next(w, r)
 			return
 		}
@@ -46,7 +46,7 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeNodeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid authorization header"})
 			return
 		}
-		if auth[len(prefix):] != h.token {
+		if auth[len(prefix):] != *h.token {
 			writeNodeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
 			return
 		}
