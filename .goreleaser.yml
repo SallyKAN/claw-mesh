@@ -43,10 +43,10 @@ changelog:
 
 brews:
   - repository:
-      owner: snapekang
+      owner: SallyKAN
       name: homebrew-tap
     name: claw-mesh
-    homepage: "https://github.com/snapekang/claw-mesh"
+    homepage: "https://github.com/SallyKAN/claw-mesh"
     description: "Multi-Gateway orchestrator for OpenClaw"
     license: "MIT"
     install: |
@@ -54,7 +54,7 @@ brews:
 
 release:
   github:
-    owner: snapekang
+    owner: SallyKAN
     name: claw-mesh
   draft: false
   prerelease: auto

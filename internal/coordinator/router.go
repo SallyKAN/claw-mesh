@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 // Router evaluates routing rules against the node registry to pick

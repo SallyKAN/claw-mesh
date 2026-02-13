@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snapek/claw-mesh/internal/config"
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/config"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 const maxRequestBody = 1 << 20 // 1 MB

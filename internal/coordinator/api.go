@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 // handleRouteAuto handles POST /api/v1/route — auto-route a message.

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 // DetectCapabilities gathers the local machine's capabilities.

@@ -4,7 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 
-	claw_mesh "github.com/snapek/claw-mesh"
+	claw_mesh "github.com/SallyKAN/claw-mesh"
 )
 
 // DashboardHandler returns an http.Handler that serves the embedded web dashboard.

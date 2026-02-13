@@ -1,4 +1,4 @@
-module github.com/snapek/claw-mesh
+module github.com/SallyKAN/claw-mesh
 
 go 1.25.0
 

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 const heartbeatInterval = 15 * time.Second

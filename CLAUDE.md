@@ -291,15 +291,15 @@ brew install snape/tap/claw-mesh
 curl -fsSL https://get.claw-mesh.dev | sh
 
 # Go
-go install github.com/snape/claw-mesh/cmd/claw-mesh@latest
+go install github.com/SallyKAN/claw-mesh/cmd/claw-mesh@latest
 
 # Docker
-docker run -p 9180:9180 snape/claw-mesh coordinator
+docker run -p 9180:9180 SallyKAN/claw-mesh coordinator
 ```
 
 ## 14. Naming & Branding
 
 - **Name:** claw-mesh
 - **Tagline:** "One mesh, many claws — orchestrate OpenClaw across machines"
-- **Repo:** github.com/snape/claw-mesh
+- **Repo:** github.com/SallyKAN/claw-mesh
 - **License:** MIT

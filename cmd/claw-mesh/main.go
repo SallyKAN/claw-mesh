@@ -14,10 +14,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/snapek/claw-mesh/internal/config"
-	"github.com/snapek/claw-mesh/internal/coordinator"
-	"github.com/snapek/claw-mesh/internal/node"
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/config"
+	"github.com/SallyKAN/claw-mesh/internal/coordinator"
+	"github.com/SallyKAN/claw-mesh/internal/node"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 	"github.com/spf13/cobra"
 )
 

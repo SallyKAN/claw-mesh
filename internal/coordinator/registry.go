@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/snapek/claw-mesh/internal/types"
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 // Registry manages the set of known nodes.

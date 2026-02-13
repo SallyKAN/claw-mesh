@@ -17,10 +17,10 @@ Your AI assistant shouldn't be trapped on one machine. Mac has Xcode, Linux has 
 
 ```bash
 # Install
-go install github.com/snapekang/claw-mesh/cmd/claw-mesh@latest
+go install github.com/SallyKAN/claw-mesh/cmd/claw-mesh@latest
 
 # Or build from source
-git clone https://github.com/snapekang/claw-mesh.git
+git clone https://github.com/SallyKAN/claw-mesh.git
 cd claw-mesh && make build
 
 # Start coordinator
