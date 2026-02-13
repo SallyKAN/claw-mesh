@@ -43,12 +43,15 @@ func (s *Server) handleRouteAuto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("routed message %s to node %s (%s)", msg.ID, node.ID, node.Name)
-	writeJSON(w, http.StatusOK, types.MessageResponse{
-		MessageID: msg.ID,
-		NodeID:    node.ID,
-		Response:  "routed",
-	})
+	log.Printf("forwarding message %s to node %s (%s)", msg.ID, node.ID, node.Name)
+	fwdResp, err := s.forwarder.ForwardMessage(node, msg, "")
+	if err != nil {
+		log.Printf("forward failed for message %s: %v", msg.ID, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("forwarding failed: %v", err)})
+		return
+	}
+	fwdResp.NodeID = node.ID
+	writeJSON(w, http.StatusOK, fwdResp)
 }
 
 // handleRouteToNode handles POST /api/v1/route/{nodeId} — route to a specific node.
@@ -96,12 +99,15 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("routed message %s to node %s (%s)", msg.ID, node.ID, node.Name)
-	writeJSON(w, http.StatusOK, types.MessageResponse{
-		MessageID: msg.ID,
-		NodeID:    node.ID,
-		Response:  "routed",
-	})
+	log.Printf("forwarding message %s to node %s (%s)", msg.ID, node.ID, node.Name)
+	fwdResp, err := s.forwarder.ForwardMessage(node, msg, "")
+	if err != nil {
+		log.Printf("forward failed for message %s: %v", msg.ID, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("forwarding failed: %v", err)})
+		return
+	}
+	fwdResp.NodeID = node.ID
+	writeJSON(w, http.StatusOK, fwdResp)
 }
 
 // handleListRules handles GET /api/v1/rules.

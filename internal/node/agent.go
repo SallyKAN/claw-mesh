@@ -2,9 +2,11 @@ package node
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -26,6 +28,9 @@ type Agent struct {
 	nodeID string
 	client *http.Client
 
+	listenAddr string
+	httpServer *http.Server
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 	stopCh    chan struct{}
@@ -40,11 +45,16 @@ type AgentConfig struct {
 	Name           string
 	Endpoint       string
 	Tags           []string
+	ListenAddr     string // address for the local message handler (default: :9121)
 }
 
 // NewAgent creates a node agent with the given configuration.
 func NewAgent(cfg AgentConfig) *Agent {
 	caps := DetectCapabilities(cfg.Tags)
+	listenAddr := cfg.ListenAddr
+	if listenAddr == "" {
+		listenAddr = ":9121"
+	}
 	return &Agent{
 		coordinatorURL: cfg.CoordinatorURL,
 		token:          cfg.Token,
@@ -52,6 +62,7 @@ func NewAgent(cfg AgentConfig) *Agent {
 		endpoint:       cfg.Endpoint,
 		capabilities:   caps,
 		client:         &http.Client{Timeout: 10 * time.Second},
+		listenAddr:     listenAddr,
 		stopCh:         make(chan struct{}),
 		done:           make(chan struct{}),
 	}
@@ -117,6 +128,22 @@ func (a *Agent) StartHeartbeat() {
 	})
 }
 
+// StartHandler starts the local HTTP server for receiving forwarded messages.
+func (a *Agent) StartHandler() error {
+	handler := NewHandler()
+	a.httpServer = &http.Server{
+		Addr:    a.listenAddr,
+		Handler: handler,
+	}
+	ln, err := net.Listen("tcp", a.listenAddr)
+	if err != nil {
+		return fmt.Errorf("listening on %s: %w", a.listenAddr, err)
+	}
+	log.Printf("node handler listening on %s", a.listenAddr)
+	go a.httpServer.Serve(ln)
+	return nil
+}
+
 func (a *Agent) heartbeatLoop() {
 	defer close(a.done)
 	ticker := time.NewTicker(heartbeatInterval)
@@ -176,6 +203,13 @@ func (a *Agent) Shutdown() {
 	// Only wait for heartbeat loop if it was started.
 	if a.started {
 		<-a.done
+	}
+
+	// Stop the local HTTP server if running.
+	if a.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		a.httpServer.Shutdown(ctx)
 	}
 
 	// Deregister from coordinator.

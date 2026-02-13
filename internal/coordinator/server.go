@@ -17,11 +17,12 @@ const maxRequestBody = 1 << 20 // 1 MB
 
 // Server is the coordinator HTTP server.
 type Server struct {
-	cfg      *config.CoordinatorConfig
-	registry *Registry
-	router   *Router
-	health   *HealthChecker
-	http     *http.Server
+	cfg       *config.CoordinatorConfig
+	registry  *Registry
+	router    *Router
+	health    *HealthChecker
+	forwarder *Forwarder
+	http      *http.Server
 }
 
 // NewServer creates a coordinator server.
@@ -29,12 +30,14 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	reg := NewRegistry()
 	rt := NewRouter(reg)
 	hc := NewHealthChecker(reg, 30*time.Second, 10*time.Second)
+	fwd := NewForwarder()
 
 	s := &Server{
-		cfg:      cfg,
-		registry: reg,
-		router:   rt,
-		health:   hc,
+		cfg:       cfg,
+		registry:  reg,
+		router:    rt,
+		health:    hc,
+		forwarder: fwd,
 	}
 
 	mux := http.NewServeMux()
