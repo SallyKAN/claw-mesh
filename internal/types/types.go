@@ -73,6 +73,7 @@ type RegisterRequest struct {
 // RegisterResponse is returned after successful registration.
 type RegisterResponse struct {
 	NodeID string `json:"node_id"`
+	Token  string `json:"token,omitempty"`
 }
 
 // HeartbeatRequest is sent periodically by node agents.

@@ -19,6 +19,7 @@ const maxRequestBody = 1 << 20 // 1 MB
 type Server struct {
 	cfg      *config.CoordinatorConfig
 	registry *Registry
+	router   *Router
 	health   *HealthChecker
 	http     *http.Server
 }
@@ -26,20 +27,29 @@ type Server struct {
 // NewServer creates a coordinator server.
 func NewServer(cfg *config.CoordinatorConfig) *Server {
 	reg := NewRegistry()
+	rt := NewRouter(reg)
 	hc := NewHealthChecker(reg, 30*time.Second, 10*time.Second)
 
 	s := &Server{
 		cfg:      cfg,
 		registry: reg,
+		router:   rt,
 		health:   hc,
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/nodes/register", s.handleRegister)
+	mux.HandleFunc("POST /api/v1/nodes/register", s.requireAuth(s.handleRegister))
 	mux.HandleFunc("DELETE /api/v1/nodes/{id}", s.requireAuth(s.handleDeregister))
 	mux.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 	mux.HandleFunc("GET /api/v1/nodes/{id}", s.handleGetNode)
 	mux.HandleFunc("POST /api/v1/nodes/{id}/heartbeat", s.requireAuth(s.handleHeartbeat))
+
+	// Routing
+	mux.HandleFunc("POST /api/v1/route", s.requireAuth(s.handleRouteAuto))
+	mux.HandleFunc("POST /api/v1/route/{nodeId}", s.requireAuth(s.handleRouteToNode))
+	mux.HandleFunc("GET /api/v1/rules", s.handleListRules)
+	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
+	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
 
 	s.http = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -134,6 +144,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	log.Printf("node registered: %s (%s) at %s", node.ID, node.Name, node.Endpoint)
 	writeJSON(w, http.StatusCreated, types.RegisterResponse{
 		NodeID: node.ID,
+		Token:  s.cfg.Token,
 	})
 }
 
