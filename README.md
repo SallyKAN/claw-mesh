@@ -23,8 +23,8 @@ go install github.com/SallyKAN/claw-mesh/cmd/claw-mesh@latest
 git clone https://github.com/SallyKAN/claw-mesh.git
 cd claw-mesh && make build
 
-# Start coordinator
-./bin/claw-mesh up --port 9180 --token mysecret
+# Start coordinator (add --allow-private for LAN setups)
+./bin/claw-mesh up --port 9180 --token mysecret --allow-private
 
 # Join from another machine (or another terminal)
 ./bin/claw-mesh join http://<coordinator-ip>:9180 --name mac-mini --tags xcode,local --token mysecret
@@ -101,6 +101,48 @@ node:
 - Per-node tokens (generated on registration)
 - Endpoint validation (SSRF protection)
 - Private IP blocking (configurable)
+
+## Troubleshooting
+
+**`yaml: invalid trailing UTF-8 octet` on startup**
+
+Don't build the binary to the project root (`go build -o claw-mesh`). Viper searches for `claw-mesh.*` config files and will try to parse the binary as YAML. Always build to `bin/`:
+
+```bash
+make build   # outputs to bin/claw-mesh
+```
+
+**`registration failed (502)` when joining**
+
+Two common causes:
+
+1. **HTTP proxy interference** — If the joining machine has `http_proxy` set (e.g. Clash), requests to the coordinator go through the proxy and fail. Bypass it:
+   ```bash
+   no_proxy=<coordinator-ip> ./bin/claw-mesh join http://<coordinator-ip>:9180 ...
+   ```
+
+2. **Private IP rejected** — By default, the coordinator blocks private/loopback IPs (SSRF protection). If the joining node is on the same LAN (e.g. `192.168.x.x`, `10.x.x.x`), start the coordinator with `--allow-private`. For nodes with public IPs this is not needed:
+   ```bash
+   # LAN setup — nodes on private network
+   ./bin/claw-mesh up --port 9180 --token mysecret --allow-private
+
+   # Public setup — nodes have public IPs, no flag needed
+   ./bin/claw-mesh up --port 9180 --token mysecret
+   ```
+
+**`invalid go version` when building**
+
+The `go.mod` specifies Go 1.25. If your machine has an older Go version, either upgrade Go or lower the version in `go.mod`.
+
+## Scripts
+
+Helper scripts for multi-machine development (configure IPs at the top of each script):
+
+```bash
+./scripts/e2e-deploy.sh   # Build, deploy to remote, start, test, cleanup
+./scripts/start.sh        # Start coordinator + remote node in background
+./scripts/stop.sh         # Stop all processes
+```
 
 ## Development
 
