@@ -54,6 +54,9 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
 
+	// Dashboard
+	mux.Handle("/", DashboardHandler())
+
 	s.http = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           recoverMiddleware(requestLogger(mux)),
@@ -131,6 +134,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" || req.Endpoint == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and endpoint are required"})
+		return
+	}
+
+	if err := validateEndpoint(req.Endpoint, s.cfg.AllowPrivate); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -238,4 +246,84 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// validateEndpoint checks that an endpoint is a valid host:port and rejects
+// URLs with schemes/paths. Unless allowPrivate is true, loopback and private
+// IPs are rejected to prevent SSRF.
+func validateEndpoint(endpoint string, allowPrivate bool) error {
+	host, port, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return fmt.Errorf("endpoint must be host:port format: %v", err)
+	}
+	if host == "" || port == "" {
+		return fmt.Errorf("endpoint must have both host and port")
+	}
+
+	// Reject anything that looks like a URL (contains / or scheme).
+	for _, ch := range endpoint {
+		if ch == '/' {
+			return fmt.Errorf("endpoint must be host:port, not a URL")
+		}
+	}
+
+	if allowPrivate {
+		return nil
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Could be a hostname — resolve it.
+		addrs, err := net.LookupHost(host)
+		if err != nil {
+			// Can't resolve — allow it (might be reachable from coordinator).
+			return nil
+		}
+		for _, addr := range addrs {
+			if parsed := net.ParseIP(addr); parsed != nil && isPrivateIP(parsed) {
+				return fmt.Errorf("endpoint resolves to private/loopback IP %s (set allow_private to permit)", addr)
+			}
+		}
+		return nil
+	}
+
+	if isPrivateIP(ip) {
+		return fmt.Errorf("private/loopback endpoints not allowed (set allow_private to permit)")
+	}
+	return nil
+}
+
+func isPrivateIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	privateRanges := []struct{ start, end net.IP }{
+		{net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255")},
+		{net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255")},
+		{net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255")},
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	for _, r := range privateRanges {
+		s := r.start.To4()
+		e := r.end.To4()
+		if bytesInRange(ip4, s, e) {
+			return true
+		}
+	}
+	return false
+}
+
+func bytesInRange(ip, start, end net.IP) bool {
+	for i := 0; i < len(ip); i++ {
+		if ip[i] < start[i] {
+			return false
+		}
+		if ip[i] > end[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -14,8 +14,9 @@ type Config struct {
 
 // CoordinatorConfig holds coordinator-specific settings.
 type CoordinatorConfig struct {
-	Port  int    `json:"port" yaml:"port" mapstructure:"port"`
-	Token string `json:"token" yaml:"token" mapstructure:"token"`
+	Port         int    `json:"port" yaml:"port" mapstructure:"port"`
+	Token        string `json:"token" yaml:"token" mapstructure:"token"`
+	AllowPrivate bool   `json:"allow_private" yaml:"allow_private" mapstructure:"allow_private"`
 }
 
 // NodeConfig holds node agent settings.

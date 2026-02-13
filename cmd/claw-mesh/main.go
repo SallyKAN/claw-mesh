@@ -107,7 +107,7 @@ func newJoinCmd() *cobra.Command {
 			coordinatorURL := args[0]
 			name, _ := cmd.Flags().GetString("name")
 			tags, _ := cmd.Flags().GetStringSlice("tags")
-			token, _ := cmd.Flags().GetString("token")
+			token := resolveToken(cmd, cfg)
 			listen, _ := cmd.Flags().GetString("listen")
 
 			if name == "" {
@@ -116,17 +116,12 @@ func newJoinCmd() *cobra.Command {
 			if len(tags) == 0 {
 				tags = cfg.Node.Tags
 			}
-			if token == "" {
-				token = cfg.Coordinator.Token
-			}
 
-			endpoint := cfg.Node.Endpoint
+			// Use the handler listen address as the registered endpoint,
+			// not the discovered gateway endpoint.
+			endpoint := listen
 			if endpoint == "" {
-				if gw, err := node.DiscoverGateway(); err == nil {
-					endpoint = gw.Endpoint
-				} else {
-					endpoint = "127.0.0.1:9121"
-				}
+				endpoint = ":9121"
 			}
 
 			if name == "" {
@@ -278,7 +273,9 @@ func newSendCmd() *cobra.Command {
 			}
 
 			var msgResp types.MessageResponse
-			json.Unmarshal(body, &msgResp)
+			if err := json.Unmarshal(body, &msgResp); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
 			fmt.Printf("Message %s routed to node %s\n", msgResp.MessageID, msgResp.NodeID)
 			fmt.Printf("Response: %s\n", msgResp.Response)
 			return nil
@@ -368,7 +365,9 @@ func newRouteAddCmd() *cobra.Command {
 			}
 
 			var created types.RoutingRule
-			json.Unmarshal(body, &created)
+			if err := json.Unmarshal(body, &created); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
 			fmt.Printf("Rule added: %s\n", created.ID)
 			return nil
 		},
@@ -392,7 +391,32 @@ func coordFlags(cmd *cobra.Command) (string, string) {
 	if base == "" {
 		base = "http://127.0.0.1:9180"
 	}
+	// Token precedence: flag -> config file -> CLAW_MESH_TOKEN env var.
+	if token == "" {
+		cfg, err := loadConfig(cmd)
+		if err == nil && cfg.Coordinator.Token != "" {
+			token = cfg.Coordinator.Token
+		}
+	}
+	if token == "" {
+		token = os.Getenv("CLAW_MESH_TOKEN")
+	}
 	return base, token
+}
+
+// resolveToken returns the auth token using precedence: flag -> config -> env.
+func resolveToken(cmd *cobra.Command, cfg *config.Config) string {
+	token, _ := cmd.Flags().GetString("token")
+	if token != "" {
+		return token
+	}
+	if cfg != nil && cfg.Coordinator.Token != "" {
+		return cfg.Coordinator.Token
+	}
+	if env := os.Getenv("CLAW_MESH_TOKEN"); env != "" {
+		return env
+	}
+	return ""
 }
 
 func fetchNodes(base, token string) ([]*types.Node, error) {

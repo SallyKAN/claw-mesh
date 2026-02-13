@@ -130,7 +130,7 @@ func (a *Agent) StartHeartbeat() {
 
 // StartHandler starts the local HTTP server for receiving forwarded messages.
 func (a *Agent) StartHandler() error {
-	handler := NewHandler()
+	handler := NewHandler(a.token)
 	a.httpServer = &http.Server{
 		Addr:    a.listenAddr,
 		Handler: handler,

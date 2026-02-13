@@ -66,6 +66,13 @@ func (r *Registry) ValidateNodeToken(token string) bool {
 	return false
 }
 
+// GetNodeToken returns the per-node token for the given node ID.
+func (r *Registry) GetNodeToken(nodeID string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.nodeTokens[nodeID]
+}
+
 // copyNode returns a deep copy of a Node.
 func copyNode(n *types.Node) *types.Node {
 	cp := *n

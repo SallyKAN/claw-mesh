@@ -44,7 +44,8 @@ func (s *Server) handleRouteAuto(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("forwarding message %s to node %s (%s)", msg.ID, node.ID, node.Name)
-	fwdResp, err := s.forwarder.ForwardMessage(node, msg, "")
+	nodeToken := s.registry.GetNodeToken(node.ID)
+	fwdResp, err := s.forwarder.ForwardMessage(r.Context(), node, msg, nodeToken)
 	if err != nil {
 		log.Printf("forward failed for message %s: %v", msg.ID, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("forwarding failed: %v", err)})
@@ -100,7 +101,8 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("forwarding message %s to node %s (%s)", msg.ID, node.ID, node.Name)
-	fwdResp, err := s.forwarder.ForwardMessage(node, msg, "")
+	nodeToken := s.registry.GetNodeToken(node.ID)
+	fwdResp, err := s.forwarder.ForwardMessage(r.Context(), node, msg, nodeToken)
 	if err != nil {
 		log.Printf("forward failed for message %s: %v", msg.ID, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("forwarding failed: %v", err)})
