@@ -58,7 +58,6 @@ echo "--- Step 2: Start coordinator ---"
   --port "$COORD_PORT" \
   --token "$TOKEN" \
   --allow-private \
-  --config /dev/null \
   >"$COORD_LOG" 2>&1 &
 COORD_PID=$!
 
@@ -76,7 +75,7 @@ echo "--- Step 3: Join node ---"
   --name "test-node" \
   --token "$TOKEN" \
   --listen "127.0.0.1:${NODE_PORT}" \
-  --config /dev/null \
+  --no-gateway \
   >"$NODE_LOG" 2>&1 &
 NODE_PID=$!
 
@@ -93,7 +92,7 @@ _pass "node registered"
 sleep 1
 
 # Verify node appears in node list.
-NODES_OUT="$("$BINARY" nodes --coordinator "$COORD_URL" --token "$TOKEN" --config /dev/null 2>&1)"
+NODES_OUT="$("$BINARY" nodes --coordinator "$COORD_URL" --token "$TOKEN" 2>&1)"
 assert_contains_str "$NODES_OUT" "test-node"
 assert_contains_str "$NODES_OUT" "online"
 _pass "node visible in 'nodes' output"
@@ -105,7 +104,7 @@ echo "--- Step 4: Send message (--auto) ---"
   --auto \
   --coordinator "$COORD_URL" \
   --token "$TOKEN" \
-  --config /dev/null \
+  \
   >"$SEND_AUTO_OUT" 2>&1 || true
 
 cat "$SEND_AUTO_OUT"
@@ -120,7 +119,7 @@ echo "--- Step 5: Send message (--node test-node) ---"
   --node "test-node" \
   --coordinator "$COORD_URL" \
   --token "$TOKEN" \
-  --config /dev/null \
+  \
   >"$SEND_NODE_OUT" 2>&1 || true
 
 cat "$SEND_NODE_OUT"
@@ -138,7 +137,7 @@ echo ""
 
 # --- Step 7: Status command ---
 echo "--- Step 7: Status command ---"
-STATUS_OUT="$("$BINARY" status --coordinator "$COORD_URL" --token "$TOKEN" --config /dev/null 2>&1)"
+STATUS_OUT="$("$BINARY" status --coordinator "$COORD_URL" --token "$TOKEN" 2>&1)"
 assert_contains_str "$STATUS_OUT" "1 online"
 _pass "status shows 1 online node"
 echo ""

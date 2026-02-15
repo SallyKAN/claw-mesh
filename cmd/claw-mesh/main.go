@@ -226,6 +226,7 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().String("gateway-endpoint", "", "OpenClaw Gateway endpoint (default: auto-discover)")
 	cmd.Flags().String("gateway-token", "", "OpenClaw Gateway auth token")
 	cmd.Flags().Int("gateway-timeout", 0, "Gateway request timeout in seconds (default: 120)")
+	cmd.Flags().Bool("no-gateway", false, "disable gateway auto-discovery (echo mode)")
 	return cmd
 }
 
@@ -599,6 +600,9 @@ func describeMatch(mc *types.MatchCriteria) string {
 
 // resolveGatewayEndpoint returns the gateway endpoint from flag, config, or auto-discovery.
 func resolveGatewayEndpoint(cmd *cobra.Command, cfg *config.Config) string {
+	if noGw, _ := cmd.Flags().GetBool("no-gateway"); noGw {
+		return ""
+	}
 	if ep, _ := cmd.Flags().GetString("gateway-endpoint"); ep != "" {
 		return ep
 	}
