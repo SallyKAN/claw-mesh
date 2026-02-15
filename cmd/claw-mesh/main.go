@@ -38,6 +38,7 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.PersistentFlags().String("coordinator", "http://127.0.0.1:9180", "coordinator URL")
 	rootCmd.PersistentFlags().String("token", "", "auth token")
 
+	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newUpCmd())
 	rootCmd.AddCommand(newJoinCmd())
@@ -57,6 +58,42 @@ func newVersionCmd() *cobra.Command {
 			fmt.Printf("claw-mesh %s\n", version)
 		},
 	}
+}
+
+func newInitCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize a new claw-mesh configuration",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			const cfgPath = "claw-mesh.yaml"
+			force, _ := cmd.Flags().GetBool("force")
+
+			if !force {
+				if _, err := os.Stat(cfgPath); err == nil {
+					return fmt.Errorf("claw-mesh.yaml already exists (use --force to overwrite)")
+				}
+			}
+
+			cfg, err := config.Generate()
+			if err != nil {
+				return err
+			}
+
+			if tls, _ := cmd.Flags().GetBool("tls"); tls {
+				cfg.TLS.Enabled = true
+			}
+
+			if err := cfg.WriteYAML(cfgPath); err != nil {
+				return err
+			}
+
+			fmt.Println("Config written to claw-mesh.yaml")
+			return nil
+		},
+	}
+	cmd.Flags().Bool("force", false, "overwrite existing config file")
+	cmd.Flags().Bool("tls", false, "enable TLS in config (placeholder)")
+	return cmd
 }
 
 func newUpCmd() *cobra.Command {

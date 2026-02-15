@@ -1,15 +1,27 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"os"
 
 	"github.com/spf13/viper"
+	"go.yaml.in/yaml/v3"
 )
+
+// TLSConfig holds TLS settings (placeholder for future use).
+type TLSConfig struct {
+	Enabled  bool   `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	CertFile string `json:"cert_file" yaml:"cert_file" mapstructure:"cert_file"`
+	KeyFile  string `json:"key_file" yaml:"key_file" mapstructure:"key_file"`
+}
 
 // Config holds the full claw-mesh configuration.
 type Config struct {
 	Coordinator CoordinatorConfig `json:"coordinator" yaml:"coordinator" mapstructure:"coordinator"`
 	Node        NodeConfig        `json:"node" yaml:"node" mapstructure:"node"`
+	TLS         TLSConfig         `json:"tls" yaml:"tls" mapstructure:"tls"`
 }
 
 // CoordinatorConfig holds coordinator-specific settings.
@@ -67,4 +79,46 @@ func Load(cfgFile string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// Generate returns a default Config with a random 32-char hex token.
+func Generate() (*Config, error) {
+	token, err := randomHex(16)
+	if err != nil {
+		return nil, fmt.Errorf("generating token: %w", err)
+	}
+
+	hostname, _ := os.Hostname()
+
+	return &Config{
+		Coordinator: CoordinatorConfig{
+			Port:         9180,
+			Token:        token,
+			AllowPrivate: true,
+		},
+		Node: NodeConfig{
+			Name: hostname,
+			Tags: []string{},
+		},
+		TLS: TLSConfig{
+			Enabled: false,
+		},
+	}, nil
+}
+
+// WriteYAML marshals the config to YAML and writes it to path.
+func (c *Config) WriteYAML(path string) error {
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
