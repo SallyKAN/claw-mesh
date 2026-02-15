@@ -41,10 +41,10 @@ type NodeConfig struct {
 
 // GatewayConfig holds OpenClaw Gateway connection settings.
 type GatewayConfig struct {
-	Endpoint     string `json:"endpoint" yaml:"endpoint" mapstructure:"endpoint"`
-	Token        string `json:"token" yaml:"token" mapstructure:"token"`
-	Timeout      int    `json:"timeout" yaml:"timeout" mapstructure:"timeout"`
-	AutoDiscover bool   `json:"auto_discover" yaml:"auto_discover" mapstructure:"auto_discover"`
+	Endpoint     string `json:"endpoint,omitempty" yaml:"endpoint,omitempty" mapstructure:"endpoint"`
+	Token        string `json:"token,omitempty" yaml:"token,omitempty" mapstructure:"token"`
+	Timeout      int    `json:"timeout,omitempty" yaml:"timeout,omitempty" mapstructure:"timeout"`
+	AutoDiscover *bool  `json:"auto_discover,omitempty" yaml:"auto_discover,omitempty" mapstructure:"auto_discover"`
 }
 
 // Load reads configuration from file and environment.
@@ -112,7 +112,7 @@ func (c *Config) WriteYAML(path string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 func randomHex(n int) (string, error) {

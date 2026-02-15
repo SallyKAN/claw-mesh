@@ -64,13 +64,21 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize a new claw-mesh configuration",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			const cfgPath = "claw-mesh.yaml"
+			cfgPath, _ := cmd.Flags().GetString("config")
+			if cfgPath == "" {
+				cfgPath = "claw-mesh.yaml"
+			}
 			force, _ := cmd.Flags().GetBool("force")
 
 			if !force {
-				if _, err := os.Stat(cfgPath); err == nil {
-					return fmt.Errorf("claw-mesh.yaml already exists (use --force to overwrite)")
+				_, err := os.Stat(cfgPath)
+				if err == nil {
+					return fmt.Errorf("%s already exists (use --force to overwrite)", cfgPath)
+				}
+				if !os.IsNotExist(err) {
+					return fmt.Errorf("checking %s: %w", cfgPath, err)
 				}
 			}
 
@@ -87,7 +95,7 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Println("Config written to claw-mesh.yaml")
+			fmt.Printf("Config written to %s\n", cfgPath)
 			return nil
 		},
 	}
@@ -598,7 +606,7 @@ func resolveGatewayEndpoint(cmd *cobra.Command, cfg *config.Config) string {
 		return cfg.Node.Gateway.Endpoint
 	}
 	// Auto-discover local gateway.
-	if cfg == nil || cfg.Node.Gateway.AutoDiscover {
+	if cfg == nil || cfg.Node.Gateway.AutoDiscover == nil || *cfg.Node.Gateway.AutoDiscover {
 		if info, err := node.DiscoverGateway(); err == nil {
 			fmt.Fprintf(os.Stderr, "discovered OpenClaw Gateway at %s\n", info.Endpoint)
 			return info.Endpoint
