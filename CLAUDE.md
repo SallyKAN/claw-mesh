@@ -303,3 +303,12 @@ docker run -p 9180:9180 SallyKAN/claw-mesh coordinator
 - **Tagline:** "One mesh, many claws — orchestrate OpenClaw across machines"
 - **Repo:** github.com/SallyKAN/claw-mesh
 - **License:** MIT
+
+## 15. OpenClaw Reference
+
+- 源码：`~/openclaw`
+- 文档：https://deepwiki.com/openclaw/openclaw
+- Gateway 默认端口：18789
+- Gateway API：`/v1/chat/completions` (OpenAI 兼容), WebSocket RPC (`agent`, `health` 等)
+- Auth token 来源优先级：`gateway.auth.token` > `OPENCLAW_GATEWAY_TOKEN` env > `CLAWDBOT_GATEWAY_TOKEN` env
+- 集成设计文档：`docs/openclaw-gateway-integration.md`

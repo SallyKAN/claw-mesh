@@ -25,6 +25,10 @@ type Agent struct {
 	endpoint       string
 	capabilities   types.Capabilities
 
+	gatewayEndpoint string
+	gatewayToken    string
+	gatewayTimeout  int
+
 	nodeID string
 	client *http.Client
 
@@ -40,12 +44,15 @@ type Agent struct {
 
 // AgentConfig holds the parameters needed to create an Agent.
 type AgentConfig struct {
-	CoordinatorURL string
-	Token          string
-	Name           string
-	Endpoint       string
-	Tags           []string
-	ListenAddr     string // address for the local message handler (default: :9121)
+	CoordinatorURL  string
+	Token           string
+	Name            string
+	Endpoint        string
+	Tags            []string
+	ListenAddr      string // address for the local message handler (default: :9121)
+	GatewayEndpoint string // OpenClaw Gateway endpoint (default: auto-discover)
+	GatewayToken    string // OpenClaw Gateway auth token
+	GatewayTimeout  int    // Gateway request timeout in seconds (default: 120)
 }
 
 // NewAgent creates a node agent with the given configuration.
@@ -56,15 +63,18 @@ func NewAgent(cfg AgentConfig) *Agent {
 		listenAddr = ":9121"
 	}
 	return &Agent{
-		coordinatorURL: cfg.CoordinatorURL,
-		token:          cfg.Token,
-		name:           cfg.Name,
-		endpoint:       cfg.Endpoint,
-		capabilities:   caps,
-		client:         &http.Client{Timeout: 10 * time.Second},
-		listenAddr:     listenAddr,
-		stopCh:         make(chan struct{}),
-		done:           make(chan struct{}),
+		coordinatorURL:  cfg.CoordinatorURL,
+		token:           cfg.Token,
+		name:            cfg.Name,
+		endpoint:        cfg.Endpoint,
+		capabilities:    caps,
+		gatewayEndpoint: cfg.GatewayEndpoint,
+		gatewayToken:    cfg.GatewayToken,
+		gatewayTimeout:  cfg.GatewayTimeout,
+		client:          &http.Client{Timeout: 10 * time.Second},
+		listenAddr:      listenAddr,
+		stopCh:          make(chan struct{}),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -130,7 +140,15 @@ func (a *Agent) StartHeartbeat() {
 
 // StartHandler starts the local HTTP server for receiving forwarded messages.
 func (a *Agent) StartHandler() error {
-	handler := NewHandler(&a.token)
+	var gw GatewayClient
+	if a.gatewayEndpoint != "" {
+		gwToken := ResolveGatewayToken(a.gatewayToken, "")
+		gw = NewHTTPGatewayClient(a.gatewayEndpoint, gwToken, a.gatewayTimeout)
+		log.Printf("gateway client configured: %s", a.gatewayEndpoint)
+	} else {
+		log.Printf("WARN: no gateway endpoint configured, messages will be echoed")
+	}
+	handler := NewHandler(&a.token, gw)
 	a.httpServer = &http.Server{
 		Addr:    a.listenAddr,
 		Handler: handler,

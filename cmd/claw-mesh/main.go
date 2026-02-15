@@ -144,12 +144,15 @@ func newJoinCmd() *cobra.Command {
 			}
 
 			agent := node.NewAgent(node.AgentConfig{
-				CoordinatorURL: coordinatorURL,
-				Token:          token,
-				Name:           name,
-				Endpoint:       endpoint,
-				Tags:           tags,
-				ListenAddr:     listen,
+				CoordinatorURL:  coordinatorURL,
+				Token:           token,
+				Name:            name,
+				Endpoint:        endpoint,
+				Tags:            tags,
+				ListenAddr:      listen,
+				GatewayEndpoint: resolveGatewayEndpoint(cmd, cfg),
+				GatewayToken:    resolveGatewayTokenFlag(cmd, cfg),
+				GatewayTimeout:  resolveGatewayTimeout(cmd, cfg),
 			})
 
 			fmt.Fprintf(os.Stderr, "joining mesh at %s as %q\n", coordinatorURL, name)
@@ -175,6 +178,9 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().String("name", "", "node display name")
 	cmd.Flags().StringSlice("tags", nil, "capability tags")
 	cmd.Flags().String("listen", ":9121", "local handler listen address")
+	cmd.Flags().String("gateway-endpoint", "", "OpenClaw Gateway endpoint (default: auto-discover)")
+	cmd.Flags().String("gateway-token", "", "OpenClaw Gateway auth token")
+	cmd.Flags().Int("gateway-timeout", 0, "Gateway request timeout in seconds (default: 120)")
 	return cmd
 }
 
@@ -544,6 +550,55 @@ func describeMatch(mc *types.MatchCriteria) string {
 		return "-"
 	}
 	return strings.Join(parts, ",")
+}
+
+// resolveGatewayEndpoint returns the gateway endpoint from flag, config, or auto-discovery.
+func resolveGatewayEndpoint(cmd *cobra.Command, cfg *config.Config) string {
+	if ep, _ := cmd.Flags().GetString("gateway-endpoint"); ep != "" {
+		return ep
+	}
+	if cfg != nil && cfg.Node.Gateway.Endpoint != "" {
+		return cfg.Node.Gateway.Endpoint
+	}
+	// Auto-discover local gateway.
+	if cfg == nil || cfg.Node.Gateway.AutoDiscover {
+		if info, err := node.DiscoverGateway(); err == nil {
+			fmt.Fprintf(os.Stderr, "discovered OpenClaw Gateway at %s\n", info.Endpoint)
+			return info.Endpoint
+		}
+	}
+	return ""
+}
+
+// resolveGatewayTokenFlag returns the gateway auth token from flag, env, config, or discovery.
+func resolveGatewayTokenFlag(cmd *cobra.Command, cfg *config.Config) string {
+	cliToken, _ := cmd.Flags().GetString("gateway-token")
+	configToken := ""
+	if cfg != nil {
+		configToken = cfg.Node.Gateway.Token
+	}
+	// Try discovery for token if not set elsewhere.
+	discoveredToken := ""
+	if cliToken == "" && configToken == "" {
+		if info, err := node.DiscoverGateway(); err == nil {
+			discoveredToken = info.Token
+		}
+	}
+	if configToken != "" && discoveredToken == "" {
+		discoveredToken = configToken
+	}
+	return node.ResolveGatewayToken(cliToken, discoveredToken)
+}
+
+// resolveGatewayTimeout returns the gateway timeout from flag or config.
+func resolveGatewayTimeout(cmd *cobra.Command, cfg *config.Config) int {
+	if t, _ := cmd.Flags().GetInt("gateway-timeout"); t > 0 {
+		return t
+	}
+	if cfg != nil && cfg.Node.Gateway.Timeout > 0 {
+		return cfg.Node.Gateway.Timeout
+	}
+	return 120
 }
 
 func buildRuleFromMatch(matchStr, target string) types.RoutingRule {

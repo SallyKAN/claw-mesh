@@ -16,6 +16,7 @@ import (
 type GatewayInfo struct {
 	Endpoint string `json:"endpoint"`
 	Version  string `json:"version"`
+	Token    string `json:"token,omitempty"`
 }
 
 // DiscoverGateway attempts to find a running local OpenClaw Gateway.
@@ -50,6 +51,9 @@ func discoverFromConfig() (*GatewayInfo, error) {
 		Gateway struct {
 			Host string `json:"host"`
 			Port int    `json:"port"`
+			Auth struct {
+				Token string `json:"token"`
+			} `json:"auth"`
 		} `json:"gateway"`
 		Version string `json:"version"`
 	}
@@ -63,12 +67,13 @@ func discoverFromConfig() (*GatewayInfo, error) {
 	}
 	port := cfg.Gateway.Port
 	if port == 0 {
-		port = 9120
+		port = 18789
 	}
 
 	return &GatewayInfo{
 		Endpoint: fmt.Sprintf("%s:%d", host, port),
 		Version:  cfg.Version,
+		Token:    cfg.Gateway.Auth.Token,
 	}, nil
 }
 
@@ -109,7 +114,7 @@ func discoverFromProcess() (*GatewayInfo, error) {
 	}
 
 	// Default endpoint — only return if gateway is actually reachable.
-	defaultEndpoint := "127.0.0.1:9120"
+	defaultEndpoint := "127.0.0.1:18789"
 	if verifyGatewayRunning(defaultEndpoint) {
 		return &GatewayInfo{
 			Endpoint: defaultEndpoint,

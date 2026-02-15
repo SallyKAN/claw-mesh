@@ -13,16 +13,19 @@ const maxNodeRequestBody = 1 << 20 // 1 MB
 
 // Handler serves the node-side HTTP API for receiving forwarded messages.
 type Handler struct {
-	token *string
-	mux   *http.ServeMux
+	token         *string
+	gatewayClient GatewayClient
+	mux           *http.ServeMux
 }
 
 // NewHandler creates a node message handler.
 // If token is non-empty, all requests must carry a matching Bearer token.
-func NewHandler(token *string) *Handler {
+// If gw is nil, messages are echoed back as a fallback.
+func NewHandler(token *string, gw GatewayClient) *Handler {
 	h := &Handler{
-		token: token,
-		mux:   http.NewServeMux(),
+		token:         token,
+		gatewayClient: gw,
+		mux:           http.NewServeMux(),
 	}
 	h.mux.HandleFunc("POST /api/v1/messages", h.requireAuth(h.handleMessage))
 	return h
@@ -55,7 +58,8 @@ func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // handleMessage receives a forwarded message from the coordinator.
-// For now it echoes back the content as a placeholder for OpenClaw gateway integration.
+// If a gateway client is configured, the message is forwarded to the local
+// OpenClaw Gateway. Otherwise it echoes back as a fallback.
 func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxNodeRequestBody)
 	dec := json.NewDecoder(r.Body)
@@ -74,13 +78,29 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("received message %s: %s", msg.ID, msg.Content)
 
-	// Echo response — placeholder for actual OpenClaw gateway forwarding.
-	resp := types.MessageResponse{
-		MessageID: msg.ID,
-		NodeID:    "", // filled by caller if needed
-		Response:  msg.Content,
+	if h.gatewayClient == nil {
+		// Echo fallback — no gateway configured.
+		log.Printf("WARN: no gateway client configured, echoing message %s", msg.ID)
+		resp := types.MessageResponse{
+			MessageID: msg.ID,
+			NodeID:    "",
+			Response:  "[claw-mesh] Gateway not available. Message: " + msg.Content,
+		}
+		writeNodeJSON(w, http.StatusOK, resp)
+		return
 	}
-	writeNodeJSON(w, http.StatusOK, resp)
+
+	// Forward to OpenClaw Gateway.
+	gwResp, err := h.gatewayClient.SendMessage(r.Context(), &msg)
+	if err != nil {
+		log.Printf("gateway forwarding failed for message %s: %v", msg.ID, err)
+		writeNodeJSON(w, http.StatusBadGateway, map[string]string{
+			"error": fmt.Sprintf("gateway error: %v", err),
+		})
+		return
+	}
+
+	writeNodeJSON(w, http.StatusOK, gwResp)
 }
 
 func writeNodeJSON(w http.ResponseWriter, status int, v any) {

@@ -1,0 +1,17 @@
+2026/02/13 23:53:24 coordinator listening on :9180
+2026/02/13 23:53:25 node registered: node-ff6ae47e105d065b (linux-box) at 192.168.3.29:9121
+2026/02/13 23:53:25 POST /api/v1/nodes/register 1.061708ms
+2026/02/13 23:53:27 GET /api/v1/nodes 356.875µs
+2026/02/13 23:53:33 GET / 2.185875ms
+2026/02/13 23:53:33 GET /api/v1/nodes 28.333µs
+2026/02/13 23:53:33 GET /api/v1/rules 147µs
+2026/02/13 23:53:38 GET /api/v1/nodes 50.25µs
+2026/02/13 23:53:38 GET /api/v1/rules 21.958µs
+2026/02/13 23:53:39 forwarding message node-42d59f18d5ab41a1 to node node-ff6ae47e105d065b (linux-box)
+2026/02/13 23:53:39 POST /api/v1/route/node-ff6ae47e105d065b 12.553917ms
+2026/02/13 23:53:40 POST /api/v1/nodes/node-ff6ae47e105d065b/heartbeat 63.875µs
+2026/02/13 23:53:43 GET /api/v1/nodes 53.25µs
+2026/02/13 23:53:43 GET /api/v1/rules 33.792µs
+2026/02/13 23:53:47 node deregistered: node-ff6ae47e105d065b
+2026/02/13 23:53:47 DELETE /api/v1/nodes/node-ff6ae47e105d065b 908.208µs
+shutting down coordinator...

@@ -89,3 +89,31 @@ func ValidNodeStatus(s NodeStatus) bool {
 	}
 	return false
 }
+
+// --- OpenAI-compatible types for Gateway integration ---
+
+// ChatMessage represents a single message in a chat completion request/response.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatCompletionRequest is the OpenAI-compatible request sent to the Gateway.
+type ChatCompletionRequest struct {
+	Model    string        `json:"model"`
+	Messages []ChatMessage `json:"messages"`
+	Stream   bool          `json:"stream,omitempty"`
+}
+
+// ChatCompletionResponse is the OpenAI-compatible response from the Gateway.
+type ChatCompletionResponse struct {
+	ID      string   `json:"id"`
+	Choices []Choice `json:"choices"`
+}
+
+// Choice represents a single completion choice.
+type Choice struct {
+	Index        int         `json:"index"`
+	Message      ChatMessage `json:"message"`
+	FinishReason string      `json:"finish_reason"`
+}

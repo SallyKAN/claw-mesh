@@ -21,9 +21,18 @@ type CoordinatorConfig struct {
 
 // NodeConfig holds node agent settings.
 type NodeConfig struct {
-	Name     string   `json:"name" yaml:"name" mapstructure:"name"`
-	Tags     []string `json:"tags" yaml:"tags" mapstructure:"tags"`
-	Endpoint string   `json:"endpoint" yaml:"endpoint" mapstructure:"endpoint"`
+	Name     string        `json:"name" yaml:"name" mapstructure:"name"`
+	Tags     []string      `json:"tags" yaml:"tags" mapstructure:"tags"`
+	Endpoint string        `json:"endpoint" yaml:"endpoint" mapstructure:"endpoint"`
+	Gateway  GatewayConfig `json:"gateway" yaml:"gateway" mapstructure:"gateway"`
+}
+
+// GatewayConfig holds OpenClaw Gateway connection settings.
+type GatewayConfig struct {
+	Endpoint     string `json:"endpoint" yaml:"endpoint" mapstructure:"endpoint"`
+	Token        string `json:"token" yaml:"token" mapstructure:"token"`
+	Timeout      int    `json:"timeout" yaml:"timeout" mapstructure:"timeout"`
+	AutoDiscover bool   `json:"auto_discover" yaml:"auto_discover" mapstructure:"auto_discover"`
 }
 
 // Load reads configuration from file and environment.
@@ -40,6 +49,8 @@ func Load(cfgFile string) (*Config, error) {
 	}
 
 	viper.SetDefault("coordinator.port", 9180)
+	viper.SetDefault("node.gateway.auto_discover", true)
+	viper.SetDefault("node.gateway.timeout", 120)
 
 	viper.SetEnvPrefix("CLAW_MESH")
 	viper.AutomaticEnv()
