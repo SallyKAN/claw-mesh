@@ -28,6 +28,7 @@ func NewHandler(token *string, gw GatewayClient) *Handler {
 		mux:           http.NewServeMux(),
 	}
 	h.mux.HandleFunc("POST /api/v1/messages", h.requireAuth(h.handleMessage))
+	h.mux.HandleFunc("GET /healthz", h.handleHealthz)
 	return h
 }
 
@@ -101,6 +102,11 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeNodeJSON(w, http.StatusOK, gwResp)
+}
+
+// handleHealthz responds to active health probes from the coordinator.
+func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeNodeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func writeNodeJSON(w http.ResponseWriter, status int, v any) {
