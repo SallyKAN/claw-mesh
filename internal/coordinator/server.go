@@ -7,6 +7,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/config"
@@ -28,7 +30,22 @@ type Server struct {
 // NewServer creates a coordinator server.
 func NewServer(cfg *config.CoordinatorConfig) *Server {
 	reg := NewRegistry()
-	rt := NewRouter(reg)
+
+	// Set up persistent store for routing rules.
+	var store *Store
+	dataDir := "."
+	if home, err := os.UserHomeDir(); err == nil {
+		dataDir = filepath.Join(home, ".claw-mesh")
+	}
+	storePath := filepath.Join(dataDir, "rules.json")
+	if s, err := NewStore(storePath); err == nil {
+		store = s
+		log.Printf("rule store: %s", storePath)
+	} else {
+		log.Printf("WARN: could not init rule store at %s: %v", storePath, err)
+	}
+
+	rt := NewRouter(reg, store)
 	hc := NewHealthChecker(reg, 30*time.Second, 10*time.Second)
 	fwd := NewForwarder()
 

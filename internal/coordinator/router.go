@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
@@ -13,13 +14,22 @@ type Router struct {
 	mu       sync.RWMutex
 	rules    []*types.RoutingRule
 	registry *Registry
+	store    *Store
 }
 
 // NewRouter creates a router backed by the given registry.
-func NewRouter(registry *Registry) *Router {
-	return &Router{
+// If store is non-nil, rules are loaded from and persisted to disk.
+func NewRouter(registry *Registry, store ...*Store) *Router {
+	rt := &Router{
 		registry: registry,
 	}
+	if len(store) > 0 && store[0] != nil {
+		rt.store = store[0]
+		if rules, err := rt.store.LoadRules(); err == nil && len(rules) > 0 {
+			rt.rules = rules
+		}
+	}
+	return rt
 }
 
 // AddRule appends a routing rule and returns its assigned ID.
@@ -31,7 +41,10 @@ func (rt *Router) AddRule(rule *types.RoutingRule) error {
 	rule.ID = id
 	rt.mu.Lock()
 	rt.rules = append(rt.rules, rule)
+	rules := make([]*types.RoutingRule, len(rt.rules))
+	copy(rules, rt.rules)
 	rt.mu.Unlock()
+	rt.persistRules(rules)
 	return nil
 }
 
@@ -42,10 +55,23 @@ func (rt *Router) RemoveRule(id string) bool {
 	for i, r := range rt.rules {
 		if r.ID == id {
 			rt.rules = append(rt.rules[:i], rt.rules[i+1:]...)
+			rules := make([]*types.RoutingRule, len(rt.rules))
+			copy(rules, rt.rules)
+			rt.persistRules(rules)
 			return true
 		}
 	}
 	return false
+}
+
+// persistRules saves rules to the store if configured.
+func (rt *Router) persistRules(rules []*types.RoutingRule) {
+	if rt.store == nil {
+		return
+	}
+	if err := rt.store.SaveRules(rules); err != nil {
+		log.Printf("WARN: failed to persist routing rules: %v", err)
+	}
 }
 
 // ListRules returns a copy of all routing rules.
