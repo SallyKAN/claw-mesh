@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
 )
@@ -64,11 +65,24 @@ func (s *Store) SaveRules(rules []*types.RoutingRule) error {
 		return fmt.Errorf("marshaling store: %w", err)
 	}
 
-	// Atomic write: write to temp file, then rename.
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	// Atomic write: write to unique temp file, fsync, then rename.
+	tmp := fmt.Sprintf("%s.tmp.%d", s.path, time.Now().UnixNano())
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("creating temp store: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
 		return fmt.Errorf("writing store: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("syncing store: %w", err)
+	}
+	f.Close()
+
 	if err := os.Rename(tmp, s.path); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("renaming store: %w", err)

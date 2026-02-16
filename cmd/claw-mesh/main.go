@@ -122,6 +122,10 @@ func newUpCmd() *cobra.Command {
 				cfg.Coordinator.AllowPrivate = true
 			}
 
+			if dd, _ := cmd.Flags().GetString("data-dir"); dd != "" {
+				cfg.Coordinator.DataDir = dd
+			}
+
 			srv := coordinator.NewServer(&cfg.Coordinator)
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -141,6 +145,7 @@ func newUpCmd() *cobra.Command {
 	}
 	cmd.Flags().Int("port", 0, "coordinator listen port (default: 9180)")
 	cmd.Flags().Bool("allow-private", false, "allow private/loopback IPs for node endpoints")
+	cmd.Flags().String("data-dir", "", "data directory for persistent state (default: ~/.claw-mesh)")
 	return cmd
 }
 

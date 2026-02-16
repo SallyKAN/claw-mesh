@@ -33,9 +33,13 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 
 	// Set up persistent store for routing rules.
 	var store *Store
-	dataDir := "."
-	if home, err := os.UserHomeDir(); err == nil {
-		dataDir = filepath.Join(home, ".claw-mesh")
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dataDir = filepath.Join(home, ".claw-mesh")
+		} else {
+			dataDir = "."
+		}
 	}
 	storePath := filepath.Join(dataDir, "rules.json")
 	if s, err := NewStore(storePath); err == nil {

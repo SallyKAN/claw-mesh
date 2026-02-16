@@ -142,7 +142,12 @@ func (s *Server) handleAddRule(w http.ResponseWriter, r *http.Request) {
 // handleDeleteRule handles DELETE /api/v1/rules/{id}.
 func (s *Server) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if !s.router.RemoveRule(id) {
+	found, err := s.router.RemoveRule(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("persisting rule deletion: %v", err)})
+		return
+	}
+	if !found {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "rule not found"})
 		return
 	}

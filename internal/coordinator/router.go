@@ -25,8 +25,11 @@ func NewRouter(registry *Registry, store ...*Store) *Router {
 	}
 	if len(store) > 0 && store[0] != nil {
 		rt.store = store[0]
-		if rules, err := rt.store.LoadRules(); err == nil && len(rules) > 0 {
+		if rules, err := rt.store.LoadRules(); err != nil {
+			log.Printf("WARN: failed to load persisted rules: %v", err)
+		} else if len(rules) > 0 {
 			rt.rules = rules
+			log.Printf("loaded %d persisted routing rules", len(rules))
 		}
 	}
 	return rt
@@ -44,34 +47,43 @@ func (rt *Router) AddRule(rule *types.RoutingRule) error {
 	rules := make([]*types.RoutingRule, len(rt.rules))
 	copy(rules, rt.rules)
 	rt.mu.Unlock()
-	rt.persistRules(rules)
+	if err := rt.persistRules(rules); err != nil {
+		return fmt.Errorf("persisting rules: %w", err)
+	}
 	return nil
 }
 
 // RemoveRule deletes a rule by ID. Returns false if not found.
-func (rt *Router) RemoveRule(id string) bool {
+// Returns an error if persistence fails.
+func (rt *Router) RemoveRule(id string) (bool, error) {
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	found := false
 	for i, r := range rt.rules {
 		if r.ID == id {
 			rt.rules = append(rt.rules[:i], rt.rules[i+1:]...)
-			rules := make([]*types.RoutingRule, len(rt.rules))
-			copy(rules, rt.rules)
-			rt.persistRules(rules)
-			return true
+			found = true
+			break
 		}
 	}
-	return false
+	if !found {
+		rt.mu.Unlock()
+		return false, nil
+	}
+	rules := make([]*types.RoutingRule, len(rt.rules))
+	copy(rules, rt.rules)
+	rt.mu.Unlock()
+	if err := rt.persistRules(rules); err != nil {
+		return true, fmt.Errorf("persisting rules: %w", err)
+	}
+	return true, nil
 }
 
 // persistRules saves rules to the store if configured.
-func (rt *Router) persistRules(rules []*types.RoutingRule) {
+func (rt *Router) persistRules(rules []*types.RoutingRule) error {
 	if rt.store == nil {
-		return
+		return nil
 	}
-	if err := rt.store.SaveRules(rules); err != nil {
-		log.Printf("WARN: failed to persist routing rules: %v", err)
-	}
+	return rt.store.SaveRules(rules)
 }
 
 // ListRules returns a copy of all routing rules.

@@ -21,6 +21,8 @@ const heartbeatInterval = 15 * time.Second
 type Agent struct {
 	coordinatorURL string
 	token          string
+	adminToken     string // original token for re-registration
+	mu             sync.Mutex
 	name           string
 	endpoint       string
 	capabilities   types.Capabilities
@@ -65,6 +67,7 @@ func NewAgent(cfg AgentConfig) *Agent {
 	return &Agent{
 		coordinatorURL:  cfg.CoordinatorURL,
 		token:           cfg.Token,
+		adminToken:      cfg.Token,
 		name:            cfg.Name,
 		endpoint:        cfg.Endpoint,
 		capabilities:    caps,
@@ -167,16 +170,41 @@ func (a *Agent) heartbeatLoop() {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
+	consecutiveFailures := 0
+	const maxFailuresBeforeReconnect = 3
+
 	for {
 		select {
 		case <-a.stopCh:
 			return
 		case <-ticker.C:
 			if err := a.sendHeartbeat(); err != nil {
-				log.Printf("heartbeat failed: %v", err)
+				consecutiveFailures++
+				log.Printf("heartbeat failed (%d/%d): %v", consecutiveFailures, maxFailuresBeforeReconnect, err)
+				if consecutiveFailures >= maxFailuresBeforeReconnect {
+					log.Printf("coordinator unreachable, attempting re-registration...")
+					if rerr := a.reconnect(); rerr != nil {
+						log.Printf("re-registration failed: %v", rerr)
+					} else {
+						log.Printf("re-registered as node %s", a.nodeID)
+						consecutiveFailures = 0
+					}
+				}
+			} else {
+				consecutiveFailures = 0
 			}
 		}
 	}
+}
+
+// reconnect attempts to re-register with the coordinator.
+// This is used when the coordinator restarts and loses node state.
+func (a *Agent) reconnect() error {
+	// Reset token to original admin token for registration.
+	a.mu.Lock()
+	a.token = a.adminToken
+	a.mu.Unlock()
+	return a.Register()
 }
 
 func (a *Agent) sendHeartbeat() error {

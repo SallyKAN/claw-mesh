@@ -29,6 +29,7 @@ type CoordinatorConfig struct {
 	Port         int    `json:"port" yaml:"port" mapstructure:"port"`
 	Token        string `json:"token" yaml:"token" mapstructure:"token"`
 	AllowPrivate bool   `json:"allow_private" yaml:"allow_private" mapstructure:"allow_private"`
+	DataDir      string `json:"data_dir,omitempty" yaml:"data_dir,omitempty" mapstructure:"data_dir"`
 }
 
 // NodeConfig holds node agent settings.

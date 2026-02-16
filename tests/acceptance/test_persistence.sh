@@ -41,7 +41,7 @@ echo "Binary built."
 
 # --- Step 2: Start coordinator ---
 echo "--- Step 2: Start coordinator ---"
-"$BINARY" up --port "$COORD_PORT" --token "$TOKEN" --allow-private >"$COORD_LOG" 2>&1 &
+"$BINARY" up --port "$COORD_PORT" --token "$TOKEN" --allow-private --data-dir "$TMPDIR_TEST/data" >"$COORD_LOG" 2>&1 &
 COORD_PID=$!
 if ! wait_for_log "$COORD_LOG" "coordinator listening" 10; then
   _fail "coordinator did not start"
@@ -80,7 +80,7 @@ _pass "coordinator stopped"
 echo "--- Step 5: Restart coordinator ---"
 COORD_PORT2="$(pick_port)"
 COORD_LOG2="$TMPDIR_TEST/coordinator2.log"
-"$BINARY" up --port "$COORD_PORT2" --token "$TOKEN" --allow-private >"$COORD_LOG2" 2>&1 &
+"$BINARY" up --port "$COORD_PORT2" --token "$TOKEN" --allow-private --data-dir "$TMPDIR_TEST/data" >"$COORD_LOG2" 2>&1 &
 COORD_PID=$!
 if ! wait_for_log "$COORD_LOG2" "coordinator listening" 10; then
   _fail "coordinator did not restart"
