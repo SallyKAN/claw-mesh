@@ -13,10 +13,24 @@ Your AI assistant shouldn't be trapped on one machine. Mac has Xcode, Linux has 
 - **Failover** — node goes down, traffic reroutes
 - **Web Dashboard** — see everything at a glance
 
+## Prerequisites
+
+claw-mesh orchestrates [OpenClaw](https://github.com/openclaw/openclaw) gateways. You need OpenClaw running on each machine you want to join the mesh.
+
+```bash
+# Install OpenClaw (Node ≥22 required)
+npm install -g openclaw@latest
+
+# Run the setup wizard (configures gateway, workspace, channels)
+openclaw onboard --install-daemon
+```
+
+That's it — the wizard handles everything. Full guide: [Getting Started](https://docs.openclaw.ai/start/getting-started)
+
 ## Quick Start
 
 ```bash
-# Install
+# Install claw-mesh
 go install github.com/SallyKAN/claw-mesh/cmd/claw-mesh@latest
 
 # Or build from source

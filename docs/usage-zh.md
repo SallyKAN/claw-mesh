@@ -2,6 +2,20 @@
 
 > 版本: v0.2-dev | 更新日期: 2026-02-16
 
+## 前置条件
+
+claw-mesh 编排的是 [OpenClaw](https://github.com/openclaw/openclaw) Gateway。每台要加入 mesh 的机器都需要先安装 OpenClaw。
+
+```bash
+# 安装 OpenClaw（需要 Node ≥22）
+npm install -g openclaw@latest
+
+# 运行配置向导（自动配置 Gateway、工作区、频道）
+openclaw onboard --install-daemon
+```
+
+向导会引导你完成所有配置。详细指南：[Getting Started](https://docs.openclaw.ai/start/getting-started)
+
 ## 快速开始
 
 ### 1. 安装
