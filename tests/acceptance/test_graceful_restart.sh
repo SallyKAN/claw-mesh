@@ -92,7 +92,7 @@ echo "--- Step 6: Wait for node auto-reconnect ---"
 # Node heartbeat interval is 10s, 3 failures = 30s, then reconnect.
 # But coordinator was down briefly, so first heartbeat after restart should fail,
 # triggering reconnect within ~30-40s.
-if ! wait_for_log "$NODE_LOG" "re-registered as node" 45; then
+if ! wait_for_log "$NODE_LOG" "re-registered as node" 90; then
   echo "--- node log ---"
   cat "$NODE_LOG"
   echo "--- coordinator2 log ---"

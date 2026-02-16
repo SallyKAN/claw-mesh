@@ -171,7 +171,9 @@ func (a *Agent) heartbeatLoop() {
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
-	const maxFailuresBeforeReconnect = 3
+	const maxFailuresBeforeReconnect = 5
+	reconnectBackoff := 5 * time.Second
+	const maxReconnectBackoff = 2 * time.Minute
 
 	for {
 		select {
@@ -182,16 +184,29 @@ func (a *Agent) heartbeatLoop() {
 				consecutiveFailures++
 				log.Printf("heartbeat failed (%d/%d): %v", consecutiveFailures, maxFailuresBeforeReconnect, err)
 				if consecutiveFailures >= maxFailuresBeforeReconnect {
-					log.Printf("coordinator unreachable, attempting re-registration...")
+					log.Printf("coordinator unreachable, attempting re-registration (backoff %v)...", reconnectBackoff)
+					// Wait before reconnect attempt
+					select {
+					case <-a.stopCh:
+						return
+					case <-time.After(reconnectBackoff):
+					}
 					if rerr := a.reconnect(); rerr != nil {
 						log.Printf("re-registration failed: %v", rerr)
+						// Exponential backoff on reconnect failure
+						reconnectBackoff *= 2
+						if reconnectBackoff > maxReconnectBackoff {
+							reconnectBackoff = maxReconnectBackoff
+						}
 					} else {
 						log.Printf("re-registered as node %s", a.nodeID)
 						consecutiveFailures = 0
+						reconnectBackoff = 5 * time.Second
 					}
 				}
 			} else {
 				consecutiveFailures = 0
+				reconnectBackoff = 5 * time.Second
 			}
 		}
 	}
@@ -200,7 +215,6 @@ func (a *Agent) heartbeatLoop() {
 // reconnect attempts to re-register with the coordinator.
 // This is used when the coordinator restarts and loses node state.
 func (a *Agent) reconnect() error {
-	// Reset token to original admin token for registration.
 	a.mu.Lock()
 	a.token = a.adminToken
 	a.mu.Unlock()

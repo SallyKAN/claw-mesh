@@ -85,7 +85,7 @@ _pass "node killed"
 # --- Wait for coordinator to detect node offline ---
 echo "--- Step 6: Wait for node to be marked offline ---"
 # Health checker runs every 10s, 2 probe failures = ~20-30s
-MAX_WAIT=45
+MAX_WAIT=60
 ELAPSED=0
 while [[ $ELAPSED -lt $MAX_WAIT ]]; do
   NODES_OUT=$("$BINARY" nodes --coordinator "$COORD_URL" --token "$TOKEN" 2>&1 || true)

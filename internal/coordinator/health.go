@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
 // HealthChecker monitors node heartbeats and optionally probes node endpoints.
@@ -35,8 +37,8 @@ func NewHealthChecker(registry *Registry, timeout, interval time.Duration) *Heal
 		timeout:       timeout,
 		interval:      interval,
 		activeProbe:   true,
-		probeClient:   &http.Client{Timeout: 5 * time.Second},
-		failThreshold: 2,
+		probeClient:   &http.Client{Timeout: 3 * time.Second},
+		failThreshold: 3,
 		probeFailures: make(map[string]int),
 		stopCh:        make(chan struct{}),
 		done:          make(chan struct{}),
@@ -76,25 +78,31 @@ func (h *HealthChecker) loop() {
 	}
 }
 
-// probeNodes sends HTTP GET /healthz to each online node endpoint.
+// probeNodes sends HTTP GET /healthz to each online node endpoint concurrently.
 func (h *HealthChecker) probeNodes() {
 	nodes := h.registry.List()
+	var wg sync.WaitGroup
 	for _, n := range nodes {
 		if n.Status == "offline" {
 			continue
 		}
-		url := fmt.Sprintf("http://%s/healthz", n.Endpoint)
-		resp, err := h.probeClient.Get(url)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			if resp != nil {
+		wg.Add(1)
+		go func(node *types.Node) {
+			defer wg.Done()
+			url := fmt.Sprintf("http://%s/healthz", node.Endpoint)
+			resp, err := h.probeClient.Get(url)
+			if err != nil || resp.StatusCode != http.StatusOK {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				h.recordProbeFailure(node.ID, node.Name)
+			} else {
 				resp.Body.Close()
+				h.clearProbeFailure(node.ID)
 			}
-			h.recordProbeFailure(n.ID, n.Name)
-		} else {
-			resp.Body.Close()
-			h.clearProbeFailure(n.ID)
-		}
+		}(n)
 	}
+	wg.Wait()
 }
 
 func (h *HealthChecker) recordProbeFailure(nodeID, name string) {
