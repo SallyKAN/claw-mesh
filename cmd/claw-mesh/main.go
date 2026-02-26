@@ -207,6 +207,35 @@ func newJoinCmd() *cobra.Command {
 
 			fmt.Fprintf(os.Stderr, "joining mesh at %s as %q\n", coordinatorURL, name)
 
+			// Runtime detection and auto-install
+			noGw, _ := cmd.Flags().GetBool("no-gateway")
+			runtimeFlag, _ := cmd.Flags().GetString("runtime")
+			autoInstall, _ := cmd.Flags().GetBool("auto-install")
+
+			if !noGw && resolveGatewayEndpoint(cmd, cfg) == "" {
+				// No gateway found, check for runtime
+				rt := node.DetectRuntime()
+				if rt != nil {
+					fmt.Fprintf(os.Stderr, "detected %s runtime (%s) at %s\n", rt.Kind, rt.Version, rt.Path)
+				} else {
+					recommended := node.RecommendRuntime()
+					if runtimeFlag != "" {
+						recommended = node.RuntimeKind(runtimeFlag)
+					}
+					fmt.Fprintf(os.Stderr, "no AI runtime detected. recommended: %s\n", recommended)
+
+					if autoInstall {
+						fmt.Fprintf(os.Stderr, "auto-installing %s...\n", recommended)
+						if err := node.InstallRuntime(recommended); err != nil {
+							fmt.Fprintf(os.Stderr, "WARN: runtime install failed: %v\n", err)
+							fmt.Fprintf(os.Stderr, "continuing in echo mode (no AI runtime)\n")
+						}
+					} else {
+						fmt.Fprintf(os.Stderr, "tip: use --auto-install to install %s, or --no-gateway for echo mode\n", recommended)
+					}
+				}
+			}
+
 			if err := agent.StartHandler(); err != nil {
 				return fmt.Errorf("starting handler: %w", err)
 			}
@@ -232,6 +261,8 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().String("gateway-token", "", "OpenClaw Gateway auth token")
 	cmd.Flags().Int("gateway-timeout", 0, "Gateway request timeout in seconds (default: 120)")
 	cmd.Flags().Bool("no-gateway", false, "disable gateway auto-discovery (echo mode)")
+	cmd.Flags().String("runtime", "", "AI runtime to use: openclaw or zeroclaw (auto-detect if empty)")
+	cmd.Flags().Bool("auto-install", false, "auto-install recommended AI runtime if none detected")
 	return cmd
 }
 
