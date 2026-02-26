@@ -70,7 +70,10 @@ func Load(cfgFile string) (*Config, error) {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("reading config: %w", err)
+			// Non-fatal: warn but continue with defaults.
+			// This handles cases like binary files being picked up
+			// or corrupted configs on fresh installs.
+			fmt.Fprintf(os.Stderr, "WARN: config file issue: %v (using defaults)\n", err)
 		}
 	}
 

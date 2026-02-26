@@ -1,0 +1,13 @@
+coordinator:
+    port: 9180
+    token: b1958a37f4b5861bc5fa9df1160e0647
+    allow_private: true
+node:
+    name: kangjiayuandeMac-mini.local
+    tags: []
+    endpoint: ""
+    gateway: {}
+tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
