@@ -173,19 +173,21 @@ func newJoinCmd() *cobra.Command {
 				tags = cfg.Node.Tags
 			}
 
-			// Use the handler listen address as the registered endpoint,
-			// not the discovered gateway endpoint.
-			endpoint := listen
+			// Use --endpoint if provided; otherwise derive from listen address.
+			endpoint, _ := cmd.Flags().GetString("endpoint")
 			if endpoint == "" {
-				endpoint = ":9121"
-			}
+				endpoint = listen
+				if endpoint == "" {
+					endpoint = ":9121"
+				}
 
-			// If endpoint has no host (just :port), detect the outbound IP
-			// so the coordinator knows how to reach this node.
-			host, port, _ := net.SplitHostPort(endpoint)
-			if host == "" {
-				if outIP := detectOutboundIP(); outIP != "" {
-					endpoint = net.JoinHostPort(outIP, port)
+				// If endpoint has no host (just :port), detect the outbound IP
+				// so the coordinator knows how to reach this node.
+				host, port, _ := net.SplitHostPort(endpoint)
+				if host == "" {
+					if outIP := detectOutboundIP(); outIP != "" {
+						endpoint = net.JoinHostPort(outIP, port)
+					}
 				}
 			}
 
@@ -257,6 +259,7 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().String("name", "", "node display name")
 	cmd.Flags().StringSlice("tags", nil, "capability tags")
 	cmd.Flags().String("listen", ":9121", "local handler listen address")
+	cmd.Flags().String("endpoint", "", "advertised endpoint address (default: auto-detect outbound IP + listen port)")
 	cmd.Flags().String("gateway-endpoint", "", "OpenClaw Gateway endpoint (default: auto-discover)")
 	cmd.Flags().String("gateway-token", "", "OpenClaw Gateway auth token")
 	cmd.Flags().Int("gateway-timeout", 0, "Gateway request timeout in seconds (default: 120)")
