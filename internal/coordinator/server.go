@@ -76,7 +76,7 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
 
 	// Dashboard
-	mux.Handle("/", DashboardHandler())
+	mux.Handle("/", DashboardHandler(cfg.Token))
 
 	s.http = &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

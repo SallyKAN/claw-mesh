@@ -126,6 +126,9 @@ func newUpCmd() *cobra.Command {
 				cfg.Coordinator.DataDir = dd
 			}
 
+			// Always allow private IPs so the local node can register as 127.0.0.1.
+			cfg.Coordinator.AllowPrivate = true
+
 			srv := coordinator.NewServer(&cfg.Coordinator)
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -134,11 +137,27 @@ func newUpCmd() *cobra.Command {
 			errCh := make(chan error, 1)
 			go func() { errCh <- srv.Start() }()
 
+			// Wait briefly for the coordinator to start listening.
+			time.Sleep(200 * time.Millisecond)
+
+			// Auto-register the local machine as a node.
+			noLocal, _ := cmd.Flags().GetBool("no-local")
+			var localAgent *node.Agent
+			if !noLocal {
+				localAgent = startLocalNode(cfg, cmd)
+			}
+
 			select {
 			case <-ctx.Done():
 				fmt.Fprintln(os.Stderr, "shutting down coordinator...")
+				if localAgent != nil {
+					localAgent.Shutdown()
+				}
 				return srv.Shutdown(context.Background())
 			case err := <-errCh:
+				if localAgent != nil {
+					localAgent.Shutdown()
+				}
 				return err
 			}
 		},
@@ -146,7 +165,58 @@ func newUpCmd() *cobra.Command {
 	cmd.Flags().Int("port", 0, "coordinator listen port (default: 9180)")
 	cmd.Flags().Bool("allow-private", false, "allow private/loopback IPs for node endpoints")
 	cmd.Flags().String("data-dir", "", "data directory for persistent state (default: ~/.claw-mesh)")
+	cmd.Flags().Bool("no-local", false, "do not auto-register the local machine as a node")
 	return cmd
+}
+
+// startLocalNode creates and registers a local node agent on the coordinator.
+func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
+	port := cfg.Coordinator.Port
+	if port == 0 {
+		port = 9180
+	}
+	coordinatorURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	token := cfg.Coordinator.Token
+
+	name, _ := os.Hostname()
+
+	// Discover local OpenClaw Gateway.
+	var gwEndpoint, gwToken string
+	if info, err := node.DiscoverGateway(); err == nil {
+		gwEndpoint = info.Endpoint
+		gwToken = info.Token
+		fmt.Fprintf(os.Stderr, "local node: discovered gateway at %s\n", gwEndpoint)
+	} else {
+		fmt.Fprintf(os.Stderr, "local node: no gateway found, running in echo mode\n")
+	}
+
+	// Resolve gateway token from env if not discovered.
+	gwToken = node.ResolveGatewayToken("", gwToken)
+
+	agent := node.NewAgent(node.AgentConfig{
+		CoordinatorURL:  coordinatorURL,
+		Token:           token,
+		Name:            name,
+		Endpoint:        "127.0.0.1:9121",
+		ListenAddr:      ":9121",
+		GatewayEndpoint: gwEndpoint,
+		GatewayToken:    gwToken,
+		GatewayTimeout:  120,
+	})
+
+	if err := agent.StartHandler(); err != nil {
+		fmt.Fprintf(os.Stderr, "local node: failed to start handler: %v\n", err)
+		return nil
+	}
+
+	if err := agent.Register(); err != nil {
+		fmt.Fprintf(os.Stderr, "local node: failed to register: %v\n", err)
+		return nil
+	}
+
+	agent.StartHeartbeat()
+	fmt.Fprintf(os.Stderr, "local node %q registered\n", name)
+	return agent
 }
 
 func newJoinCmd() *cobra.Command {

@@ -13,3 +13,6 @@
 *.test
 *.out
 claw-mesh-linux-amd64
+
+# Auto Claude data directory
+.auto-claude/

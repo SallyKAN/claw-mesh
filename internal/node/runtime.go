@@ -111,6 +111,24 @@ func installOpenClaw() error {
 		return fmt.Errorf("OpenClaw requires Node.js (v18+). Install Node.js first, or use --runtime zeroclaw")
 	}
 	log.Println("installing OpenClaw via npm...")
+
+	// Check if global npm prefix is writable; if not, use user-local prefix directly.
+	globalPrefix := npmGlobalPrefix()
+	if globalPrefix != "" && !isDirWritable(globalPrefix) {
+		home, _ := os.UserHomeDir()
+		prefix := home + "/.local"
+		log.Printf("global npm prefix %s not writable, installing to %s ...", globalPrefix, prefix)
+		os.MkdirAll(prefix+"/bin", 0755)
+		cmd := exec.Command("npm", "install", "-g", "--prefix", prefix, "openclaw")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("npm install openclaw --prefix %s failed: %w", prefix, err)
+		}
+		log.Printf("OpenClaw installed to %s/bin/openclaw — make sure %s/bin is in your PATH", prefix, prefix)
+		return nil
+	}
+
 	cmd := exec.Command("npm", "install", "-g", "openclaw")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -119,6 +137,34 @@ func installOpenClaw() error {
 	}
 	log.Println("OpenClaw installed successfully")
 	return nil
+}
+
+// npmGlobalPrefix returns the npm global prefix directory (e.g. /usr/local).
+func npmGlobalPrefix() string {
+	out, err := exec.Command("npm", "prefix", "-g").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// isDirWritable checks if a directory is writable by the current user.
+func isDirWritable(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	if !info.IsDir() {
+		return false
+	}
+	// Try creating a temp file to test write access.
+	f, err := os.CreateTemp(dir, ".claw-mesh-write-test-*")
+	if err != nil {
+		return false
+	}
+	f.Close()
+	os.Remove(f.Name())
+	return true
 }
 
 func installZeroClaw() error {

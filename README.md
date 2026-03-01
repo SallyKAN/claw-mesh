@@ -1,5 +1,7 @@
 # 🦞 claw-mesh
 
+[中文](README-zh.md)
+
 > One mesh, many claws — orchestrate OpenClaw across machines.
 
 claw-mesh is a multi-gateway orchestrator for [OpenClaw](https://github.com/openclaw/openclaw). Run OpenClaw on multiple machines and let claw-mesh handle node discovery, capability-based routing, and message forwarding — all from a single binary.
@@ -15,17 +17,38 @@ Your AI assistant shouldn't be trapped on one machine. Mac has Xcode, Linux has 
 
 ## Prerequisites
 
-claw-mesh orchestrates [OpenClaw](https://github.com/openclaw/openclaw) gateways. You need OpenClaw running on each machine you want to join the mesh.
+Each machine joining the mesh needs an AI runtime (the gateway that actually talks to your AI provider). claw-mesh supports two runtimes:
+
+| | [OpenClaw](https://github.com/openclaw/openclaw) | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) |
+|---|---|---|
+| Language | Node.js / TypeScript | Rust |
+| Binary size | ~200 MB (with node_modules) | ~5 MB |
+| Memory | 512 MB+ recommended | < 50 MB |
+| Requires | Node.js ≥ 22 | Nothing (static binary) |
+| Channels | Telegram, WhatsApp, Slack, Discord, etc. | CLI, HTTP API |
+| Best for | Full-featured desktop setups | Headless servers, ARM/embedded, low-resource devices |
+
+**Easiest path — let claw-mesh decide:**
 
 ```bash
-# Install OpenClaw (Node ≥22 required)
-npm install -g openclaw@latest
-
-# Run the setup wizard (configures gateway, workspace, channels)
-openclaw onboard --install-daemon
+# Auto-detect hardware and install the best runtime
+claw-mesh join <coordinator-url> --auto-install
 ```
 
-That's it — the wizard handles everything. Full guide: [Getting Started](https://docs.openclaw.ai/start/getting-started)
+`--auto-install` checks your system (memory, Node.js availability) and picks the right runtime. On a beefy Mac with Node.js it installs OpenClaw; on a headless Linux box without Node.js it installs ZeroClaw.
+
+**Manual install (if you prefer):**
+
+```bash
+# OpenClaw (Node ≥22 required)
+npm install -g openclaw@latest
+openclaw onboard --install-daemon
+
+# Or ZeroClaw (no dependencies)
+curl -fsSL https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/zeroclaw-$(uname -m)-unknown-linux-gnu.tar.gz | tar xz -C ~/.local/bin/
+```
+
+**Community runtimes:** The Claw ecosystem also includes community ports like [TinyClaw](https://github.com/suislanchez/tinyclaw) (Rust, ultra-light), [MobClaw](https://github.com/wamynobe/mobclaw) (Android/Kotlin), [NetClaw](https://github.com/Aisht669/NetClaw) (.NET), and others. claw-mesh currently orchestrates OpenClaw and ZeroClaw; community runtimes can join via `--no-gateway` (echo mode) or manual gateway endpoint configuration.
 
 ## Quick Start
 
@@ -41,7 +64,7 @@ cd claw-mesh && make build
 ./bin/claw-mesh up --port 9180 --token mysecret --allow-private
 
 # Join from another machine (or another terminal)
-./bin/claw-mesh join http://<coordinator-ip>:9180 --name mac-mini --tags xcode,local --token mysecret
+./bin/claw-mesh join http://<coordinator-ip>:9180 --name mac-mini --tags xcode,local --token mysecret --auto-install
 ```
 
 Open `http://localhost:9180` for the web dashboard.
@@ -69,6 +92,9 @@ Open `http://localhost:9180` for the web dashboard.
 ```bash
 claw-mesh up                    # Start coordinator
 claw-mesh join <url>            # Join as a node
+claw-mesh join <url> --auto-install          # Join + auto-install runtime
+claw-mesh join <url> --runtime zeroclaw      # Join with specific runtime
+claw-mesh join <url> --no-gateway            # Join in echo mode (no AI runtime)
 claw-mesh status                # Mesh overview
 claw-mesh nodes                 # List all nodes
 claw-mesh send --auto "msg"     # Auto-route a message

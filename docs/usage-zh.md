@@ -4,17 +4,45 @@
 
 ## 前置条件
 
-claw-mesh 编排的是 [OpenClaw](https://github.com/openclaw/openclaw) Gateway。每台要加入 mesh 的机器都需要先安装 OpenClaw。
+每台加入 mesh 的机器需要一个 AI 运行时（负责与 AI 提供商通信的 Gateway）。claw-mesh 支持两种运行时：
+
+| | [OpenClaw](https://github.com/openclaw/openclaw) | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) |
+|---|---|---|
+| 语言 | Node.js / TypeScript | Rust |
+| 二进制大小 | ~200 MB（含 node_modules） | ~5 MB |
+| 内存占用 | 建议 512 MB+ | < 50 MB |
+| 依赖 | Node.js ≥ 22 | 无（静态二进制） |
+| 频道支持 | Telegram、WhatsApp、Slack、Discord 等 | CLI、HTTP API |
+| 适用场景 | 全功能桌面环境 | 无头服务器、ARM/嵌入式、低资源设备 |
+
+**推荐方式 — 让 claw-mesh 自动选择：**
 
 ```bash
-# 安装 OpenClaw（需要 Node ≥22）
-npm install -g openclaw@latest
-
-# 运行配置向导（自动配置 Gateway、工作区、频道）
-openclaw onboard --install-daemon
+# 自动检测硬件环境并安装最合适的运行时
+claw-mesh join <coordinator-url> --auto-install
 ```
 
-向导会引导你完成所有配置。详细指南：[Getting Started](https://docs.openclaw.ai/start/getting-started)
+自动检测逻辑：
+- 内存 < 512 MB → 选择 ZeroClaw（轻量）
+- 没有 Node.js → 选择 ZeroClaw（无需额外依赖）
+- 有 Node.js 且内存充足 → 选择 OpenClaw（全功能）
+
+你也可以用 `--runtime openclaw` 或 `--runtime zeroclaw` 强制指定。
+
+**手动安装：**
+
+```bash
+# OpenClaw（需要 Node ≥22）
+npm install -g openclaw@latest
+openclaw onboard --install-daemon
+
+# 或 ZeroClaw（无依赖）
+curl -fsSL https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/zeroclaw-$(uname -m)-unknown-linux-gnu.tar.gz | tar xz -C ~/.local/bin/
+```
+
+**社区运行时：** Claw 生态还有社区移植版本，如 [TinyClaw](https://github.com/suislanchez/tinyclaw)（Rust 超轻量）、[MobClaw](https://github.com/wamynobe/mobclaw)（Android/Kotlin）、[NetClaw](https://github.com/Aisht669/NetClaw)（.NET）等。claw-mesh 目前编排 OpenClaw 和 ZeroClaw；社区运行时可通过 `--no-gateway`（echo 模式）或手动配置 gateway endpoint 加入。
+
+详细指南：[Getting Started](https://docs.openclaw.ai/start/getting-started)
 
 ## 快速开始
 
@@ -65,10 +93,11 @@ claw-mesh up
 ### 4. 加入节点
 
 ```bash
-# 在每台 OpenClaw 机器上运行
+# 在每台机器上运行（自动检测并安装运行时）
 claw-mesh join http://coordinator-ip:9180 \
   --name my-mac \
-  --token <同一个token>
+  --token <同一个token> \
+  --auto-install
 ```
 
 常用参数：
@@ -76,7 +105,10 @@ claw-mesh join http://coordinator-ip:9180 \
 - `--token <token>` — Coordinator 的 admin token
 - `--listen :9121` — 本地 handler 监听地址
 - `--tags gpu,python` — 自定义标签
-- `--no-gateway` — 禁用 OpenClaw Gateway 自动发现（测试用）
+- `--auto-install` — 自动检测并安装推荐的 AI 运行时
+- `--runtime openclaw|zeroclaw` — 强制指定运行时（配合 `--auto-install`）
+- `--endpoint <host:port>` — 手动指定节点对外地址（默认自动检测）
+- `--no-gateway` — 禁用 Gateway 自动发现（echo 模式，测试用）
 
 ### 5. 发送消息
 
@@ -148,15 +180,25 @@ claw-mesh join http://127.0.0.1:9180 --name mac-mini
 claw-mesh join http://192.168.1.10:9180 \
   --name linux-gpu \
   --token <mac-mini的token> \
-  --tags gpu,cuda
+  --tags gpu,cuda \
+  --auto-install
 ```
 
 **Raspberry Pi：**
 ```bash
+# 内存 < 512MB，--auto-install 会自动选择 ZeroClaw
 claw-mesh join http://192.168.1.10:9180 \
   --name rpi-monitor \
   --token <mac-mini的token> \
-  --tags lightweight
+  --tags lightweight \
+  --auto-install
+
+# 或显式指定 ZeroClaw
+claw-mesh join http://192.168.1.10:9180 \
+  --name rpi-monitor \
+  --token <mac-mini的token> \
+  --tags lightweight \
+  --auto-install --runtime zeroclaw
 ```
 
 **配置路由规则：**
@@ -235,3 +277,6 @@ A: 检查 `~/.claw-mesh/rules.json` 是否存在。如果用了 `--data-dir`，�
 
 **Q: 节点显示 offline 但实际在运行**
 A: 检查网络连通性。Coordinator 需要能访问节点的 handler 端口（默认 9121）。
+
+**Q: 没有 Node.js 能加入 mesh 吗？**
+A: 可以。使用 `--auto-install`，claw-mesh 会自动检测到没有 Node.js 并安装 ZeroClaw（Rust 实现，无需 Node.js）。也可以显式指定：`claw-mesh join <url> --auto-install --runtime zeroclaw`。
