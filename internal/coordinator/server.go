@@ -75,6 +75,10 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
 
+	// Seed (config sync for new nodes)
+	mux.HandleFunc("GET /api/v1/seed/config", s.requireAuth(s.handleSeedConfig))
+	mux.HandleFunc("GET /api/v1/seed/workspace", s.requireAuth(s.handleSeedWorkspace))
+
 	// Dashboard
 	mux.Handle("/", DashboardHandler(cfg.Token))
 

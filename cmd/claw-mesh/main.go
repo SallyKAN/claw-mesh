@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -274,6 +275,20 @@ func newJoinCmd() *cobra.Command {
 			autoInstall, _ := cmd.Flags().GetBool("auto-install")
 
 			if !noGw && resolveGatewayEndpoint(cmd, cfg) == "" {
+				// Sync config/workspace from coordinator before starting gateway.
+				noSync, _ := cmd.Flags().GetBool("no-sync-config")
+				if !noSync {
+					fmt.Fprintf(os.Stderr, "syncing config from coordinator...\n")
+					if err := node.FetchSeedConfig(coordinatorURL, token); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: seed config sync failed: %v\n", err)
+					}
+					home, _ := os.UserHomeDir()
+					wsDir := filepath.Join(home, "clawd")
+					if err := node.FetchSeedWorkspace(coordinatorURL, token, wsDir); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: seed workspace sync failed: %v\n", err)
+					}
+				}
+
 				// No gateway found, check for runtime
 				rt := node.DetectRuntime()
 				if rt != nil {
@@ -364,6 +379,7 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().Bool("no-gateway", false, "disable gateway auto-discovery (echo mode)")
 	cmd.Flags().String("runtime", "", "AI runtime to use: openclaw or zeroclaw (auto-detect if empty)")
 	cmd.Flags().Bool("auto-install", false, "auto-install recommended AI runtime if none detected")
+	cmd.Flags().Bool("no-sync-config", false, "skip fetching seed config/workspace from coordinator")
 	cmd.Flags().String("api-key", "", "AI provider API key (passed to runtime onboard)")
 	cmd.Flags().String("api-base", "", "AI provider base URL (for custom providers)")
 	cmd.Flags().String("api-model", "", "AI model ID (for custom providers)")

@@ -910,7 +910,116 @@ rust               tool          -           linux-gpu
 
 ---
 
-## 9. 实施顺序
+## 9. Config Seed — 新节点配置同步
+
+### 9.1 问题
+
+新节点 `join --auto-install` 时，安装完 OpenClaw 后需要手动配置 API key、model、provider 等。这些配置和主节点完全一样，重复配置既麻烦又容易出错。
+
+同时，根据四层同步模型，身份层（SOUL.md、IDENTITY.md、AGENTS.md、`.claude/skills/*.md`）和记忆层（MEMORY.md、`memory/*.md`）也应该在新节点加入时同步过去。
+
+### 9.2 设计
+
+Coordinator 本地读取主节点的 OpenClaw 配置和 workspace 文件，通过 API 分发给新节点。
+
+**CoordinatorConfig 新增字段**：
+
+```yaml
+coordinator:
+  port: 9180
+  token: "..."
+  workspace_dir: "/home/user/clawd"              # 主节点 workspace 路径
+  openclaw_config: "~/.config/openclaw/openclaw.json"  # 主节点 OpenClaw 配置路径
+```
+
+**新增 API**：
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| GET | /api/v1/seed/config | Bearer Token | 返回 OpenClaw 配置（去掉 channel/port 等本地字段） |
+| GET | /api/v1/seed/workspace | Bearer Token | 返回身份层 + 记忆层文件（JSON 打包） |
+
+### 9.3 Config Seed 过滤规则
+
+从主节点 `openclaw.json` 中读取完整配置，去掉以下本地字段后返回：
+
+**排除字段**（节点独立，不同步）：
+- `channels` — Telegram/Discord 等通道配置
+- `port` / `listen` — 监听端口
+- `hostname` — 主机名
+- `daemon` — 守护进程配置
+- `node_name` — 节点名称
+
+**保留字段**（所有节点共享）：
+- `apiProvider` / `apiKey` / `apiBase` — AI 提供商配置
+- `model` / `defaultModel` — 模型配置
+- `thinking` — 推理配置
+- `persona` / `soul` — 人格配置
+- 其他非本地字段
+
+### 9.4 Workspace Seed 内容
+
+按四层模型同步身份层和记忆层文件：
+
+```json
+{
+  "files": [
+    {"path": "SOUL.md", "content": "..."},
+    {"path": "IDENTITY.md", "content": "..."},
+    {"path": "AGENTS.md", "content": "..."},
+    {"path": "MEMORY.md", "content": "..."},
+    {"path": "memory/2026-03-01.md", "content": "..."},
+    {"path": "memory/2026-03-02.md", "content": "..."}
+  ]
+}
+```
+
+不同步的文件：
+- `HEARTBEAT.md` — 各节点独立
+- `TOOLS.md` — 各节点独立（本地工具笔记）
+- `USER.md` — 包含隐私信息，不通过 API 分发
+- `openclaw.json` — 走 seed/config 单独处理
+- `skills/` — v0.2 后续通过 git-based sync 处理
+
+### 9.5 新节点 Join 流程
+
+```
+claw-mesh join <coordinator> --auto-install
+  │
+  ├─ 1. 检测/安装 OpenClaw runtime
+  │
+  ├─ 2. GET /api/v1/seed/config
+  │     → 写入本地 ~/.config/openclaw/openclaw.json
+  │     → 跳过 `openclaw onboard`，直接 `openclaw gateway start`
+  │
+  ├─ 3. GET /api/v1/seed/workspace
+  │     → 写入本地 workspace 目录
+  │     → 身份层 + 记忆层文件就位
+  │
+  └─ 4. 启动 gateway → 注册到 coordinator → 正常运行
+```
+
+**CLI flag**：
+- `--sync-config` — 从 coordinator 拉取 OpenClaw 配置（默认 true when --auto-install）
+- `--no-sync-config` — 跳过配置同步（使用本地已有配置）
+
+### 9.6 安全考虑
+
+- 所有 seed API 需要 Bearer token 认证（复用 mesh token）
+- API key 在传输中通过 HTTPS 保护（生产环境应启用 TLS）
+- Coordinator 只读取本地文件，不缓存敏感信息
+
+---
+
+## 10. 实施顺序
+
+**Phase 0: Config Seed（新节点配置同步）**
+1. config/config.go — CoordinatorConfig 新增 WorkspaceDir、OpenClawConfig
+2. coordinator/seed.go — seed API handlers（config + workspace）
+3. coordinator/server.go — 注册 seed 路由
+4. node/runtime.go — 新增 FetchSeedConfig、FetchSeedWorkspace
+5. cmd/claw-mesh/main.go — join 流程集成 seed 拉取
+6. 测试
 
 **Phase 1: Skill-Aware Routing**
 1. types.go — 新类型
