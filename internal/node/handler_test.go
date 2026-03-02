@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
@@ -96,8 +97,20 @@ func TestHandler_GatewayError(t *testing.T) {
 
 	rr := postMessage(h, types.Message{ID: "msg-3", Content: "hello"})
 
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d: %s", rr.Code, rr.Body.String())
+	// Gateway errors now fall back to echo with 200 instead of 502.
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (echo fallback), got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp types.MessageResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.MessageID != "msg-3" {
+		t.Errorf("expected message_id msg-3, got %s", resp.MessageID)
+	}
+	if !strings.Contains(resp.Response, "Gateway error (echo fallback)") {
+		t.Errorf("expected fallback response, got: %s", resp.Response)
 	}
 }
 
