@@ -22,7 +22,7 @@ type Forwarder struct {
 // NewForwarder creates a message forwarder with sensible defaults.
 func NewForwarder() *Forwarder {
 	return &Forwarder{
-		client: &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{Timeout: 180 * time.Second},
 	}
 }
 

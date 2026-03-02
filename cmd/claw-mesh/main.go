@@ -265,21 +265,10 @@ func newJoinCmd() *cobra.Command {
 				name, _ = os.Hostname()
 			}
 
-			agent := node.NewAgent(node.AgentConfig{
-				CoordinatorURL:  coordinatorURL,
-				Token:           token,
-				Name:            name,
-				Endpoint:        endpoint,
-				Tags:            tags,
-				ListenAddr:      listen,
-				GatewayEndpoint: resolveGatewayEndpoint(cmd, cfg),
-				GatewayToken:    resolveGatewayTokenFlag(cmd, cfg),
-				GatewayTimeout:  resolveGatewayTimeout(cmd, cfg),
-			})
-
 			fmt.Fprintf(os.Stderr, "joining mesh at %s as %q\n", coordinatorURL, name)
 
-			// Runtime detection and auto-install
+			// Runtime detection, auto-install, and gateway start — BEFORE agent creation
+			// so that resolveGatewayEndpoint() can discover the just-started gateway.
 			noGw, _ := cmd.Flags().GetBool("no-gateway")
 			runtimeFlag, _ := cmd.Flags().GetString("runtime")
 			autoInstall, _ := cmd.Flags().GetBool("auto-install")
@@ -289,6 +278,19 @@ func newJoinCmd() *cobra.Command {
 				rt := node.DetectRuntime()
 				if rt != nil {
 					fmt.Fprintf(os.Stderr, "detected %s runtime (%s) at %s\n", rt.Kind, rt.Version, rt.Path)
+					// Runtime binary exists but gateway isn't running — try to start it.
+					apiKey, _ := cmd.Flags().GetString("api-key")
+					apiBase, _ := cmd.Flags().GetString("api-base")
+					apiModel, _ := cmd.Flags().GetString("api-model")
+					apiProvider, _ := cmd.Flags().GetString("api-provider")
+					if err := node.StartRuntime(rt.Kind, node.RuntimeStartOpts{
+						Provider: apiProvider,
+						APIKey:   apiKey,
+						BaseURL:  apiBase,
+						Model:    apiModel,
+					}); err != nil {
+						fmt.Fprintf(os.Stderr, "WARN: gateway start failed: %v\n", err)
+					}
 				} else {
 					recommended := node.RecommendRuntime()
 					if runtimeFlag != "" {
@@ -301,12 +303,38 @@ func newJoinCmd() *cobra.Command {
 						if err := node.InstallRuntime(recommended); err != nil {
 							fmt.Fprintf(os.Stderr, "WARN: runtime install failed: %v\n", err)
 							fmt.Fprintf(os.Stderr, "continuing in echo mode (no AI runtime)\n")
+						} else {
+							// Install succeeded — start the gateway.
+							apiKey, _ := cmd.Flags().GetString("api-key")
+							apiBase, _ := cmd.Flags().GetString("api-base")
+							apiModel, _ := cmd.Flags().GetString("api-model")
+							apiProvider, _ := cmd.Flags().GetString("api-provider")
+							if err := node.StartRuntime(recommended, node.RuntimeStartOpts{
+								Provider: apiProvider,
+								APIKey:   apiKey,
+								BaseURL:  apiBase,
+								Model:    apiModel,
+							}); err != nil {
+								fmt.Fprintf(os.Stderr, "WARN: gateway start failed: %v\n", err)
+							}
 						}
 					} else {
 						fmt.Fprintf(os.Stderr, "tip: use --auto-install to install %s, or --no-gateway for echo mode\n", recommended)
 					}
 				}
 			}
+
+			agent := node.NewAgent(node.AgentConfig{
+				CoordinatorURL:  coordinatorURL,
+				Token:           token,
+				Name:            name,
+				Endpoint:        endpoint,
+				Tags:            tags,
+				ListenAddr:      listen,
+				GatewayEndpoint: resolveGatewayEndpoint(cmd, cfg),
+				GatewayToken:    resolveGatewayTokenFlag(cmd, cfg),
+				GatewayTimeout:  resolveGatewayTimeout(cmd, cfg),
+			})
 
 			if err := agent.StartHandler(); err != nil {
 				return fmt.Errorf("starting handler: %w", err)
@@ -336,6 +364,10 @@ func newJoinCmd() *cobra.Command {
 	cmd.Flags().Bool("no-gateway", false, "disable gateway auto-discovery (echo mode)")
 	cmd.Flags().String("runtime", "", "AI runtime to use: openclaw or zeroclaw (auto-detect if empty)")
 	cmd.Flags().Bool("auto-install", false, "auto-install recommended AI runtime if none detected")
+	cmd.Flags().String("api-key", "", "AI provider API key (passed to runtime onboard)")
+	cmd.Flags().String("api-base", "", "AI provider base URL (for custom providers)")
+	cmd.Flags().String("api-model", "", "AI model ID (for custom providers)")
+	cmd.Flags().String("api-provider", "", "AI provider: anthropic, openai, custom (auto-detect from env if empty)")
 	return cmd
 }
 

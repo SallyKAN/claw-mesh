@@ -91,13 +91,16 @@ func (h *Handler) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward to OpenClaw Gateway.
+	// Forward to OpenClaw Gateway; fall back to echo on failure.
 	gwResp, err := h.gatewayClient.SendMessage(r.Context(), &msg)
 	if err != nil {
-		log.Printf("gateway forwarding failed for message %s: %v", msg.ID, err)
-		writeNodeJSON(w, http.StatusBadGateway, map[string]string{
-			"error": fmt.Sprintf("gateway error: %v", err),
-		})
+		log.Printf("gateway forwarding failed for message %s, falling back to echo: %v", msg.ID, err)
+		resp := types.MessageResponse{
+			MessageID: msg.ID,
+			NodeID:    "",
+			Response:  "[claw-mesh] Gateway error (echo fallback). Message: " + msg.Content,
+		}
+		writeNodeJSON(w, http.StatusOK, resp)
 		return
 	}
 

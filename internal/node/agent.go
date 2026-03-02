@@ -146,7 +146,9 @@ func (a *Agent) StartHandler() error {
 	var gw GatewayClient
 	if a.gatewayEndpoint != "" {
 		gwToken := ResolveGatewayToken(a.gatewayToken, "")
-		gw = NewHTTPGatewayClient(a.gatewayEndpoint, gwToken, a.gatewayTimeout)
+		wsClient := NewWSGatewayClient(a.gatewayEndpoint, gwToken, a.gatewayTimeout)
+		wsClient.ConnectAndLog()
+		gw = wsClient
 		log.Printf("gateway client configured: %s", a.gatewayEndpoint)
 	} else {
 		log.Printf("WARN: no gateway endpoint configured, messages will be echoed")

@@ -85,6 +85,8 @@ cleanup_linux() {
     ssh_cmd "
         # Kill any running claw-mesh node
         pkill -f 'claw-mesh join' 2>/dev/null || true
+        # Kill any openclaw gateway
+        pkill -f 'openclaw' 2>/dev/null || true
         # Remove openclaw if installed via npm (global or user-local)
         npm uninstall -g openclaw 2>/dev/null || true
         npm uninstall -g --prefix \$HOME/.local openclaw 2>/dev/null || true
@@ -148,23 +150,36 @@ echo ""
 test_auto_detect_openclaw() {
     info "=== Test 1: --auto-install auto-detects OpenClaw ==="
 
+    # Determine API key for onboard (from env)
+    local api_key_flag=""
+    local api_env_export=""
+    if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+        api_key_flag="--api-key ${ANTHROPIC_API_KEY}"
+        api_env_export="export ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}'"
+    elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
+        api_key_flag="--api-key ${OPENAI_API_KEY} --api-provider openai"
+        api_env_export="export OPENAI_API_KEY='${OPENAI_API_KEY}'"
+    fi
+
     start_coordinator
 
     local node_log="/tmp/claw-mesh-autoinstall-t1.log"
     # Start node in background
     ssh_cmd "
         export no_proxy='${MAC_IP}'
+        ${api_env_export}
         nohup ${LINUX_BIN} join http://${MAC_IP}:${COORD_PORT} \
             --name auto-node-1 --token ${TOKEN} --auto-install \
+            ${api_key_flag} \
             >${node_log} 2>&1 &
         echo \$!
     " > /tmp/test1_pid.txt 2>&1
 
-    # Wait for install to complete (npm install openclaw takes ~5min)
+    # Wait for install + onboard to complete (npm install openclaw takes ~5min)
     for i in $(seq 1 90); do
         local log_content
         log_content=$(ssh_cmd "cat ${node_log} 2>/dev/null" 2>/dev/null || echo "")
-        if echo "$log_content" | grep -q "installed successfully\|install failed\|installed to\|detected.*runtime"; then
+        if echo "$log_content" | grep -q "installed successfully\|install failed\|installed to\|detected.*runtime\|gateway reachable\|gateway start failed\|onboard failed"; then
             break
         fi
         # Also check if npm is still running
@@ -212,6 +227,22 @@ test_auto_detect_openclaw() {
     else
         fail "Test 1b: install did not complete (timeout?)"
         echo "  Output tail: $(echo "$output" | tail -5)"
+    fi
+
+    # Test 1c: Verify Gateway port 18789 is reachable (only if API key was available)
+    if [[ -n "$api_key_flag" ]]; then
+        if echo "$output" | grep -q "gateway reachable"; then
+            ok "Test 1c: Gateway started and reachable on :18789"
+        elif echo "$output" | grep -q "Gateway already running"; then
+            ok "Test 1c: Gateway was already running"
+        elif ssh_cmd "nc -z 127.0.0.1 18789 2>/dev/null" 2>/dev/null; then
+            ok "Test 1c: Gateway port 18789 reachable (verified via nc)"
+        else
+            fail "Test 1c: Gateway port 18789 not reachable after onboard"
+            echo "  Output tail: $(echo "$output" | tail -10)"
+        fi
+    else
+        skip "Test 1c: no API key in env, skipping gateway start verification"
     fi
 
     ssh_cmd "pkill -f 'claw-mesh join' 2>/dev/null || true" 2>/dev/null || true
