@@ -46,7 +46,7 @@ _pass "binary built"
 # --- Step 2: Start coordinator ---
 echo "--- Step 2: Start coordinator ---"
 "$BINARY" up --port "$COORD_PORT" --token "$TOKEN" --allow-private \
-  --data-dir "$TMPDIR_TEST/data" >"$COORD_LOG" 2>&1 &
+  --data-dir "$TMPDIR_TEST/data" --config "$TMPDIR_TEST/claw-mesh.yaml" >"$COORD_LOG" 2>&1 &
 COORD_PID=$!
 if ! wait_for_log "$COORD_LOG" "coordinator listening" 10; then
   _fail "coordinator did not start"
@@ -76,11 +76,12 @@ kill "$COORD_PID" 2>/dev/null || true
 wait "$COORD_PID" 2>/dev/null || true
 COORD_PID=""
 _pass "coordinator stopped gracefully"
+sleep 2
 
 # --- Step 5: Restart coordinator on SAME port ---
 echo "--- Step 5: Restart coordinator ---"
 "$BINARY" up --port "$COORD_PORT" --token "$TOKEN" --allow-private \
-  --data-dir "$TMPDIR_TEST/data" >"$COORD_LOG2" 2>&1 &
+  --data-dir "$TMPDIR_TEST/data" --config "$TMPDIR_TEST/claw-mesh.yaml" >"$COORD_LOG2" 2>&1 &
 COORD_PID=$!
 if ! wait_for_log "$COORD_LOG2" "coordinator listening" 10; then
   _fail "coordinator did not restart"

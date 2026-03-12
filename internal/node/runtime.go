@@ -1,6 +1,7 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -252,39 +253,46 @@ func startOpenClaw(opts RuntimeStartOpts) error {
 		return err
 	}
 
-	// Resolve provider + key from opts or environment.
-	provider, keyFlag, keyVal, err := resolveProviderOpts(opts)
-	if err != nil {
-		return err
-	}
-
 	// Build onboard command.
 	args := []string{"onboard", "--non-interactive", "--accept-risk", "--install-daemon"}
-	if provider != "" {
-		args = append(args, "--auth-choice", provider)
-	}
-	if keyFlag != "" && keyVal != "" {
-		args = append(args, "--"+keyFlag, keyVal)
-	}
-	if opts.BaseURL != "" {
-		args = append(args, "--custom-base-url", opts.BaseURL)
-		// Determine compatibility mode from provider hint or default to anthropic.
-		compat := "anthropic"
-		if opts.Provider == "openai" || opts.Provider == "custom" {
-			compat = "openai"
+
+	// Resolve provider + key from opts or environment.
+	// If that fails, check if local openclaw.json already has auth config
+	// (e.g. from seed config sync) — if so, onboard can read it directly.
+	provider, keyFlag, keyVal, err := resolveProviderOpts(opts)
+	if err != nil {
+		if localConfigHasAuth() {
+			log.Println("no explicit API key, but local openclaw.json has auth config — using existing config")
+		} else {
+			return err
 		}
-		args = append(args, "--custom-compatibility", compat)
-		// custom-api-key requires a model ID; provide a sensible default.
-		if opts.Model == "" {
-			if compat == "anthropic" {
-				opts.Model = "claude-sonnet-4-20250514"
-			} else {
-				opts.Model = "gpt-4o"
+	} else {
+		if provider != "" {
+			args = append(args, "--auth-choice", provider)
+		}
+		if keyFlag != "" && keyVal != "" {
+			args = append(args, "--"+keyFlag, keyVal)
+		}
+		if opts.BaseURL != "" {
+			args = append(args, "--custom-base-url", opts.BaseURL)
+			// Determine compatibility mode from provider hint or default to anthropic.
+			compat := "anthropic"
+			if opts.Provider == "openai" || opts.Provider == "custom" {
+				compat = "openai"
+			}
+			args = append(args, "--custom-compatibility", compat)
+			// custom-api-key requires a model ID; provide a sensible default.
+			if opts.Model == "" {
+				if compat == "anthropic" {
+					opts.Model = "claude-sonnet-4-20250514"
+				} else {
+					opts.Model = "gpt-4o"
+				}
 			}
 		}
-	}
-	if opts.Model != "" {
-		args = append(args, "--custom-model-id", opts.Model)
+		if opts.Model != "" {
+			args = append(args, "--custom-model-id", opts.Model)
+		}
 	}
 
 	log.Printf("starting OpenClaw: %s %s", binPath, strings.Join(args, " "))
@@ -385,6 +393,27 @@ func resolveProviderOpts(opts RuntimeStartOpts) (provider, keyFlag, keyVal strin
 	}
 
 	return "", "", "", fmt.Errorf("no API key provided: pass --api-key or set ANTHROPIC_API_KEY / OPENAI_API_KEY")
+}
+
+// localConfigHasAuth checks if the local openclaw.json already has auth/model config.
+func localConfigHasAuth() bool {
+	cfgPath := localOpenClawConfigPath()
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	// Check for models.providers or auth.profiles keys.
+	if _, ok := raw["models"]; ok {
+		return true
+	}
+	if _, ok := raw["auth"]; ok {
+		return true
+	}
+	return false
 }
 
 // waitForGateway polls the endpoint until it's reachable or timeout expires.
