@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/config"
@@ -20,13 +22,14 @@ const maxRequestBody = 1 << 20 // 1 MB
 
 // Server is the coordinator HTTP server.
 type Server struct {
-	cfg        *config.CoordinatorConfig
-	registry   *Registry
-	router     *Router
-	health     *HealthChecker
-	forwarder  *Forwarder
-	syncServer *meshsync.SyncServer
-	http       *http.Server
+	cfg             *config.CoordinatorConfig
+	registry        *Registry
+	router          *Router
+	health          *HealthChecker
+	forwarder       *Forwarder
+	syncServer      *meshsync.SyncServer
+	http            *http.Server
+	openClawVersion string
 }
 
 // NewServer creates a coordinator server.
@@ -56,11 +59,12 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	fwd := NewForwarder()
 
 	s := &Server{
-		cfg:       cfg,
-		registry:  reg,
-		router:    rt,
-		health:    hc,
-		forwarder: fwd,
+		cfg:             cfg,
+		registry:        reg,
+		router:          rt,
+		health:          hc,
+		forwarder:       fwd,
+		openClawVersion: detectLocalOpenClawVersion(),
 	}
 
 	mux := http.NewServeMux()
@@ -206,12 +210,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	node := &types.Node{
-		ID:            id,
-		Name:          req.Name,
-		Endpoint:      req.Endpoint,
-		Capabilities:  req.Capabilities,
-		Status:        types.NodeStatusOnline,
-		LastHeartbeat: time.Now(),
+		ID:              id,
+		Name:            req.Name,
+		Endpoint:        req.Endpoint,
+		Capabilities:    req.Capabilities,
+		Status:          types.NodeStatusOnline,
+		LastHeartbeat:   time.Now(),
+		OpenClawVersion: req.OpenClawVersion,
 	}
 
 	if err := s.registry.Add(node); err != nil {
@@ -222,8 +227,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("node registered: %s (%s) at %s", node.ID, node.Name, node.Endpoint)
 	writeJSON(w, http.StatusCreated, types.RegisterResponse{
-		NodeID: node.ID,
-		Token:  nodeToken,
+		NodeID:                     node.ID,
+		Token:                      nodeToken,
+		CoordinatorOpenClawVersion: s.openClawVersion,
 	})
 }
 
@@ -377,4 +383,13 @@ func bytesInRange(ip, start, end net.IP) bool {
 		}
 	}
 	return true
+}
+
+// detectLocalOpenClawVersion returns the OpenClaw version installed on this machine.
+func detectLocalOpenClawVersion() string {
+	out, err := exec.Command("openclaw", "--version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

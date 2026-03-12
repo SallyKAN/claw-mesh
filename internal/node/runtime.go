@@ -455,3 +455,61 @@ func getSystemMemoryMB() int {
 	}
 	return 0
 }
+
+// UpgradeOpenClaw upgrades OpenClaw to the specified version using npm.
+func UpgradeOpenClaw(targetVersion string) error {
+	if !hasNodeJS() {
+		return fmt.Errorf("OpenClaw requires Node.js for upgrade")
+	}
+	log.Printf("upgrading OpenClaw to %s...", targetVersion)
+	pkg := "openclaw@" + targetVersion
+
+	globalPrefix := npmGlobalPrefix()
+	if globalPrefix != "" && !isDirWritable(globalPrefix) {
+		home, _ := os.UserHomeDir()
+		prefix := home + "/.local"
+		cmd := exec.Command("npm", "install", "-g", "--prefix", prefix, pkg)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	cmd := exec.Command("npm", "install", "-g", pkg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// CompareVersions compares two semver-like version strings.
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+// Handles formats like "1.2.3", "v1.2.3", "openclaw 1.2.3".
+func CompareVersions(a, b string) int {
+	pa := parseVersion(a)
+	pb := parseVersion(b)
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			return pa[i] - pb[i]
+		}
+	}
+	return 0
+}
+
+// parseVersion extracts [major, minor, patch] from a version string.
+func parseVersion(s string) [3]int {
+	// Strip common prefixes.
+	s = strings.TrimSpace(s)
+	for _, prefix := range []string{"openclaw ", "zeroclaw ", "v"} {
+		s = strings.TrimPrefix(s, prefix)
+	}
+	// Take only the first word (in case of trailing text).
+	if idx := strings.IndexByte(s, ' '); idx >= 0 {
+		s = s[:idx]
+	}
+	parts := strings.SplitN(s, ".", 4)
+	var v [3]int
+	for i := 0; i < 3 && i < len(parts); i++ {
+		n, _ := strconv.Atoi(parts[i])
+		v[i] = n
+	}
+	return v
+}

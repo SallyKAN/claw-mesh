@@ -31,6 +31,8 @@ type Agent struct {
 	gatewayEndpoint string
 	gatewayToken    string
 	gatewayTimeout  int
+	openClawVersion string
+	runtimeKind     RuntimeKind
 
 	nodeID string
 	client *http.Client
@@ -55,10 +57,12 @@ type AgentConfig struct {
 	Name            string
 	Endpoint        string
 	Tags            []string
-	ListenAddr      string // address for the local message handler (default: :9121)
-	GatewayEndpoint string // OpenClaw Gateway endpoint (default: auto-discover)
-	GatewayToken    string // OpenClaw Gateway auth token
-	GatewayTimeout  int    // Gateway request timeout in seconds (default: 120)
+	ListenAddr      string      // address for the local message handler (default: :9121)
+	GatewayEndpoint string      // OpenClaw Gateway endpoint (default: auto-discover)
+	GatewayToken    string      // OpenClaw Gateway auth token
+	GatewayTimeout  int         // Gateway request timeout in seconds (default: 120)
+	OpenClawVersion string      // OpenClaw version detected on this node
+	RuntimeKind     RuntimeKind // which runtime this node runs (openclaw, zeroclaw, none)
 }
 
 // NewAgent creates a node agent with the given configuration.
@@ -78,6 +82,8 @@ func NewAgent(cfg AgentConfig) *Agent {
 		gatewayEndpoint: cfg.GatewayEndpoint,
 		gatewayToken:    cfg.GatewayToken,
 		gatewayTimeout:  cfg.GatewayTimeout,
+		openClawVersion: cfg.OpenClawVersion,
+		runtimeKind:     cfg.RuntimeKind,
 		client:          &http.Client{Timeout: 10 * time.Second},
 		listenAddr:      listenAddr,
 		stopCh:          make(chan struct{}),
@@ -88,9 +94,10 @@ func NewAgent(cfg AgentConfig) *Agent {
 // Register sends a registration request to the coordinator.
 func (a *Agent) Register() error {
 	req := types.RegisterRequest{
-		Name:         a.name,
-		Endpoint:     a.endpoint,
-		Capabilities: a.capabilities,
+		Name:            a.name,
+		Endpoint:        a.endpoint,
+		Capabilities:    a.capabilities,
+		OpenClawVersion: a.openClawVersion,
 	}
 
 	body, err := json.Marshal(req)
@@ -133,6 +140,22 @@ func (a *Agent) Register() error {
 	}
 
 	log.Printf("registered as node %s", a.nodeID)
+
+	// Check if coordinator has a newer OpenClaw version and auto-upgrade.
+	// Only applies when this node runs OpenClaw (not ZeroClaw or embedded runtimes).
+	if a.runtimeKind == RuntimeOpenClaw && regResp.CoordinatorOpenClawVersion != "" && a.openClawVersion != "" {
+		if CompareVersions(regResp.CoordinatorOpenClawVersion, a.openClawVersion) > 0 {
+			log.Printf("OpenClaw version mismatch: local=%s, coordinator=%s — upgrading...",
+				a.openClawVersion, regResp.CoordinatorOpenClawVersion)
+			if err := UpgradeOpenClaw(regResp.CoordinatorOpenClawVersion); err != nil {
+				log.Printf("WARN: OpenClaw upgrade failed: %v", err)
+			} else {
+				log.Printf("OpenClaw upgraded to %s", regResp.CoordinatorOpenClawVersion)
+				a.openClawVersion = regResp.CoordinatorOpenClawVersion
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -23,12 +23,13 @@ type Capabilities struct {
 
 // Node represents a single machine running an OpenClaw Gateway.
 type Node struct {
-	ID            string       `json:"id" yaml:"id"`
-	Name          string       `json:"name" yaml:"name"`
-	Endpoint      string       `json:"endpoint" yaml:"endpoint"`
-	Capabilities  Capabilities `json:"capabilities" yaml:"capabilities"`
-	Status        NodeStatus   `json:"status" yaml:"status"`
-	LastHeartbeat time.Time    `json:"last_heartbeat" yaml:"last_heartbeat"`
+	ID              string       `json:"id" yaml:"id"`
+	Name            string       `json:"name" yaml:"name"`
+	Endpoint        string       `json:"endpoint" yaml:"endpoint"`
+	Capabilities    Capabilities `json:"capabilities" yaml:"capabilities"`
+	Status          NodeStatus   `json:"status" yaml:"status"`
+	LastHeartbeat   time.Time    `json:"last_heartbeat" yaml:"last_heartbeat"`
+	OpenClawVersion string       `json:"openclaw_version,omitempty" yaml:"openclaw_version,omitempty"`
 }
 
 // MatchCriteria defines what a routing rule matches against.
@@ -65,15 +66,17 @@ type MessageResponse struct {
 
 // RegisterRequest is sent by a node agent to register with the coordinator.
 type RegisterRequest struct {
-	Name         string       `json:"name"`
-	Endpoint     string       `json:"endpoint"`
-	Capabilities Capabilities `json:"capabilities"`
+	Name            string       `json:"name"`
+	Endpoint        string       `json:"endpoint"`
+	Capabilities    Capabilities `json:"capabilities"`
+	OpenClawVersion string       `json:"openclaw_version,omitempty"`
 }
 
 // RegisterResponse is returned after successful registration.
 type RegisterResponse struct {
-	NodeID string `json:"node_id"`
-	Token  string `json:"token,omitempty"`
+	NodeID                     string `json:"node_id"`
+	Token                      string `json:"token,omitempty"`
+	CoordinatorOpenClawVersion string `json:"coordinator_openclaw_version,omitempty"`
 }
 
 // HeartbeatRequest is sent periodically by node agents.

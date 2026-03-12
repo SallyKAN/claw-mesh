@@ -185,13 +185,26 @@ func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
 	name, _ := os.Hostname()
 
 	// Discover local OpenClaw Gateway.
-	var gwEndpoint, gwToken string
+	var gwEndpoint, gwToken, gwVersion string
 	if info, err := node.DiscoverGateway(); err == nil {
 		gwEndpoint = info.Endpoint
 		gwToken = info.Token
+		gwVersion = info.Version
 		fmt.Fprintf(os.Stderr, "local node: discovered gateway at %s\n", gwEndpoint)
 	} else {
 		fmt.Fprintf(os.Stderr, "local node: no gateway found, running in echo mode\n")
+	}
+
+	// Detect runtime version if not discovered via gateway.
+	var runtimeKind node.RuntimeKind
+	if gwVersion == "" {
+		if rt := node.DetectRuntime(); rt != nil {
+			gwVersion = rt.Version
+			runtimeKind = rt.Kind
+		}
+	} else {
+		// Gateway was discovered, assume OpenClaw.
+		runtimeKind = node.RuntimeOpenClaw
 	}
 
 	// Resolve gateway token from env if not discovered.
@@ -206,6 +219,8 @@ func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
 		GatewayEndpoint: gwEndpoint,
 		GatewayToken:    gwToken,
 		GatewayTimeout:  120,
+		OpenClawVersion: gwVersion,
+		RuntimeKind:     runtimeKind,
 	})
 
 	if err := agent.StartHandler(); err != nil {
@@ -342,6 +357,14 @@ func newJoinCmd() *cobra.Command {
 				}
 			}
 
+			// Detect local OpenClaw version and runtime kind for the agent.
+			var openClawVersion string
+			var rtKind node.RuntimeKind
+			if rt := node.DetectRuntime(); rt != nil {
+				openClawVersion = rt.Version
+				rtKind = rt.Kind
+			}
+
 			agent := node.NewAgent(node.AgentConfig{
 				CoordinatorURL:  coordinatorURL,
 				Token:           token,
@@ -352,6 +375,8 @@ func newJoinCmd() *cobra.Command {
 				GatewayEndpoint: resolveGatewayEndpoint(cmd, cfg),
 				GatewayToken:    resolveGatewayTokenFlag(cmd, cfg),
 				GatewayTimeout:  resolveGatewayTimeout(cmd, cfg),
+				OpenClawVersion: openClawVersion,
+				RuntimeKind:     rtKind,
 			})
 
 			if err := agent.StartHandler(); err != nil {
