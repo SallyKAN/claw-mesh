@@ -117,3 +117,57 @@ type Choice struct {
 	Message      ChatMessage `json:"message"`
 	FinishReason string      `json:"finish_reason"`
 }
+
+// --- Sync types (v0.2) ---
+
+// SyncFileEntry is a single file record in a sync manifest.
+type SyncFileEntry struct {
+	Path    string    `json:"path"`
+	SHA256  string    `json:"sha256"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
+}
+
+// SyncManifest is the coordinator's authoritative file manifest.
+type SyncManifest struct {
+	Version   int64           `json:"version"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	Files     []SyncFileEntry `json:"files"`
+}
+
+// SyncPushRequest is sent by a node to upload changed files.
+type SyncPushRequest struct {
+	NodeID string         `json:"node_id"`
+	Files  []SyncPushFile `json:"files"`
+}
+
+// SyncPushFile is a single file in a push request.
+type SyncPushFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	SHA256  string `json:"sha256"`
+	Delete  bool   `json:"delete,omitempty"`
+}
+
+// SyncPushResponse is the result of a push operation.
+type SyncPushResponse struct {
+	Accepted  []string       `json:"accepted"`
+	Conflicts []SyncConflict `json:"conflicts,omitempty"`
+	Version   int64          `json:"version"`
+}
+
+// SyncConflict describes a file conflict during push.
+type SyncConflict struct {
+	Path       string `json:"path"`
+	NodeID     string `json:"node_id"`
+	Resolution string `json:"resolution"`
+}
+
+// SyncNodeStatus is a single node's sync state (for dashboard).
+type SyncNodeStatus struct {
+	NodeID          string    `json:"node_id"`
+	LastSyncAt      time.Time `json:"last_sync_at"`
+	ManifestVersion int64     `json:"manifest_version"`
+	FileCount       int       `json:"file_count"`
+	HasConflict     bool      `json:"has_conflict"`
+}

@@ -357,6 +357,15 @@ body{
   border:1px solid var(--border);background:var(--bg);color:var(--text-dim);font-size:10px;cursor:pointer;
 }
 .route-select:focus{outline:none;border-color:var(--cyan)}
+/* Sync badges */
+.sync-badge{
+  font-family:'JetBrains Mono',monospace;
+  font-size:8px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;
+  padding:1px 6px;border-radius:3px;margin-top:-2px;
+}
+.sync-badge.synced{background:var(--green-dim);color:var(--green)}
+.sync-badge.syncing{background:var(--cyan-dim);color:var(--cyan);animation:badge-pulse 1.5s ease-in-out infinite}
+.sync-badge.conflict{background:var(--amber-dim);color:var(--amber)}
 </style>
 </head>
 <body>
@@ -379,6 +388,10 @@ body{
           <div class="stat">
             <span class="stat-value" id="stat-busy" style="color:var(--amber)">0</span>
             <span class="stat-label">busy</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value" id="stat-synced" style="color:var(--teal)">0</span>
+            <span class="stat-label">synced</span>
           </div>
         </div>
       </div>
@@ -448,6 +461,7 @@ body{
 const API = window.location.origin;
 const TOKEN = window.__TOKEN__ || '';
 let nodesCache = [];
+let syncStatusCache = {};
 let chatHistory = [];
 let activeNodeId = null;
 let orbitElements = []; // track rendered orbit nodes
@@ -540,6 +554,15 @@ function renderTopology() {
     nodeEl.style.left = nx + 'px';
     nodeEl.style.top = ny + 'px';
     nodeEl.dataset.nodeId = n.id;
+    // Determine sync badge for this node
+    const nodeSyncStatus = syncStatusCache[n.id];
+    let syncBadgeHTML = '';
+    if (nodeSyncStatus) {
+      const syncClass = nodeSyncStatus.has_conflict ? 'conflict' : 'synced';
+      const syncLabel = nodeSyncStatus.has_conflict ? '⚠ conflict' : '✓ synced';
+      syncBadgeHTML = '<span class="sync-badge ' + syncClass + '">' + syncLabel + '</span>';
+    }
+
     nodeEl.innerHTML =
       '<div class="node-bubble ' + statusClass + '">' +
         osIcon(os) +
@@ -547,7 +570,8 @@ function renderTopology() {
       '</div>' +
       '<span class="orbit-name">' + esc(n.name) + '</span>' +
       '<span class="orbit-meta">' + esc(os) + '/' + esc(arch) + '</span>' +
-      '<span class="orbit-badge ' + badgeClass + '">' + (isActive ? 'processing' : n.status) + '</span>';
+      '<span class="orbit-badge ' + badgeClass + '">' + (isActive ? 'processing' : n.status) + '</span>' +
+      syncBadgeHTML;
 
     canvas.appendChild(nodeEl);
     orbitElements.push(nodeEl);
@@ -557,14 +581,23 @@ function renderTopology() {
 // --- Nodes refresh ---
 async function refreshNodes() {
   try {
-    const nodes = await fetch(API + '/api/v1/nodes').then(r => r.ok ? r.json() : []);
+    const [nodes, syncStatuses] = await Promise.all([
+      fetch(API + '/api/v1/nodes').then(r => r.ok ? r.json() : []),
+      fetch(API + '/api/v1/sync/status').then(r => r.ok ? r.json() : []).catch(() => [])
+    ]);
     nodesCache = nodes || [];
+
+    // Build sync status lookup by node_id
+    syncStatusCache = {};
+    (syncStatuses || []).forEach(s => { syncStatusCache[s.node_id] = s; });
 
     const onCount = nodesCache.filter(n => n.status === 'online' || n.status === 'busy').length;
     const busyCount = nodesCache.filter(n => n.status === 'busy').length;
+    const syncedCount = Object.keys(syncStatusCache).length;
     document.getElementById('stat-total').textContent = nodesCache.length;
     document.getElementById('stat-online').textContent = onCount;
     document.getElementById('stat-busy').textContent = busyCount;
+    document.getElementById('stat-synced').textContent = syncedCount;
 
     // Update route dropdown
     const sel = document.getElementById('route-target');

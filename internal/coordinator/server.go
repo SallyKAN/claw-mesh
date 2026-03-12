@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/config"
+	meshsync "github.com/SallyKAN/claw-mesh/internal/sync"
 	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
@@ -19,12 +20,13 @@ const maxRequestBody = 1 << 20 // 1 MB
 
 // Server is the coordinator HTTP server.
 type Server struct {
-	cfg       *config.CoordinatorConfig
-	registry  *Registry
-	router    *Router
-	health    *HealthChecker
-	forwarder *Forwarder
-	http      *http.Server
+	cfg        *config.CoordinatorConfig
+	registry   *Registry
+	router     *Router
+	health     *HealthChecker
+	forwarder  *Forwarder
+	syncServer *meshsync.SyncServer
+	http       *http.Server
 }
 
 // NewServer creates a coordinator server.
@@ -78,6 +80,30 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	// Seed (config sync for new nodes)
 	mux.HandleFunc("GET /api/v1/seed/config", s.requireAuth(s.handleSeedConfig))
 	mux.HandleFunc("GET /api/v1/seed/workspace", s.requireAuth(s.handleSeedWorkspace))
+
+	// Sync (file sync across nodes)
+	syncStore, err := meshsync.NewManifestStore(
+		filepath.Join(dataDir, "sync-manifest.json"),
+		filepath.Join(dataDir, "sync-data"),
+	)
+	if err != nil {
+		log.Printf("WARN: could not init sync store: %v", err)
+	} else {
+		// Seed manifest from workspace if available.
+		if wsDir := s.resolveWorkspaceDir(); wsDir != "" {
+			if serr := syncStore.SeedFromWorkspace(wsDir); serr != nil {
+				log.Printf("WARN: sync seed from workspace failed: %v", serr)
+			} else {
+				log.Printf("sync: seeded manifest from %s", wsDir)
+			}
+		}
+		syncSrv := meshsync.NewSyncServer(syncStore)
+		s.syncServer = syncSrv
+		mux.HandleFunc("GET /api/v1/sync/manifest", s.requireAuth(syncSrv.HandleGetManifest))
+		mux.HandleFunc("GET /api/v1/sync/file", s.requireAuth(syncSrv.HandleGetFile))
+		mux.HandleFunc("POST /api/v1/sync/push", s.requireAuth(syncSrv.HandlePush))
+		mux.HandleFunc("GET /api/v1/sync/status", syncSrv.HandleStatus)
+	}
 
 	// Dashboard
 	mux.Handle("/", DashboardHandler(cfg.Token))

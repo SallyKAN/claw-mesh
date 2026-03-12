@@ -8,9 +8,10 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
+	gosync "sync"
 	"time"
 
+	meshsync "github.com/SallyKAN/claw-mesh/internal/sync"
 	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
@@ -22,7 +23,7 @@ type Agent struct {
 	coordinatorURL string
 	token          string
 	adminToken     string // original token for re-registration
-	mu             sync.Mutex
+	mu             gosync.Mutex
 	name           string
 	endpoint       string
 	capabilities   types.Capabilities
@@ -37,8 +38,11 @@ type Agent struct {
 	listenAddr string
 	httpServer *http.Server
 
-	startOnce sync.Once
-	stopOnce  sync.Once
+	syncClient  *meshsync.SyncClient
+	syncWatcher *meshsync.Watcher
+
+	startOnce gosync.Once
+	stopOnce  gosync.Once
 	stopCh    chan struct{}
 	done      chan struct{}
 	started   bool
@@ -262,6 +266,11 @@ func (a *Agent) Shutdown() {
 		close(a.stopCh)
 	})
 
+	// Stop sync watcher if running.
+	if a.syncWatcher != nil {
+		a.syncWatcher.Stop()
+	}
+
 	// Only wait for heartbeat loop if it was started.
 	if a.started {
 		<-a.done
@@ -277,6 +286,38 @@ func (a *Agent) Shutdown() {
 	// Deregister from coordinator.
 	if a.nodeID != "" {
 		a.deregister()
+	}
+}
+
+// StartSync initializes the sync client and watcher for continuous file sync.
+func (a *Agent) StartSync(workspaceDir string) {
+	a.syncClient = meshsync.NewSyncClient(a.coordinatorURL, a.token, a.nodeID, workspaceDir)
+	a.syncWatcher = meshsync.NewWatcher(workspaceDir, 30*time.Second, func() {
+		if err := a.syncClient.PushSync(); err != nil {
+			log.Printf("sync push failed: %v", err)
+		}
+	})
+	a.syncWatcher.Start()
+	go a.syncPullLoop()
+	log.Printf("sync: started (workspace=%s, interval=30s)", workspaceDir)
+}
+
+func (a *Agent) syncPullLoop() {
+	// Initial pull immediately.
+	if err := a.syncClient.PullSync(); err != nil {
+		log.Printf("sync: initial pull failed: %v", err)
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			if err := a.syncClient.PullSync(); err != nil {
+				log.Printf("sync pull failed: %v", err)
+			}
+		}
 	}
 }
 
