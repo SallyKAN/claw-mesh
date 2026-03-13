@@ -34,6 +34,7 @@ export interface ChatMessage {
   content: string
   source: 'user' | 'node'
   node_id?: string
+  node_name?: string
   timestamp: string
 }
 

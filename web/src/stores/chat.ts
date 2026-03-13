@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ChatMessage } from '@/lib/types'
 import { meshApi } from '@/lib/api'
+import { useNodesStore } from './nodes'
 
 interface ChatState {
   messages: ChatMessage[]
@@ -36,6 +37,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: res.response,
         source: 'node',
         node_id: res.node_id,
+        node_name: useNodesStore.getState().nodes.find((n) => n.id === res.node_id)?.name,
         timestamp: new Date().toISOString(),
       }
       set((state) => ({ messages: [...state.messages, nodeMsg] }))

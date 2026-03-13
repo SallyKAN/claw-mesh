@@ -3,12 +3,12 @@
 import { useState } from 'react'
 import { WizardStepper } from '@/components/wizard/wizard-stepper'
 import { NetworkStep } from '@/components/wizard/network-step'
-import { ConfigStep } from '@/components/wizard/config-step'
+import { ConfigStep, type ConfigValue } from '@/components/wizard/config-step'
 import { ExecStep } from '@/components/wizard/exec-step'
 
 interface WizardData {
   network: { type: 'lan' | 'public'; coordinatorUrl: string }
-  config: { name: string; tags: string }
+  config: ConfigValue
 }
 
 const TOTAL_STEPS = 3
@@ -17,12 +17,21 @@ export default function WizardPage() {
   const [step, setStep] = useState(1)
   const [data, setData] = useState<WizardData>({
     network: { type: 'lan', coordinatorUrl: '' },
-    config: { name: '', tags: '' },
+    config: {
+      name: '',
+      tags: '',
+      endpoint: '',
+      autoInstall: true,
+      gatewayEndpoint: '',
+      apiProvider: '',
+      apiKey: '',
+      apiBase: '',
+      apiModel: '',
+    },
   })
 
   return (
     <div className="space-y-8 max-w-2xl">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold uppercase tracking-widest text-green">
           ADD NODE TO MESH
@@ -30,7 +39,6 @@ export default function WizardPage() {
         <WizardStepper currentStep={step} totalSteps={TOTAL_STEPS} />
       </div>
 
-      {/* Step content */}
       <div className="border border-border bg-surface p-6">
         {step === 1 && (
           <NetworkStep
@@ -42,6 +50,7 @@ export default function WizardPage() {
           <ConfigStep
             value={data.config}
             onChange={(config) => setData((d) => ({ ...d, config }))}
+            networkType={data.network.type}
           />
         )}
         {step === 3 && (
@@ -49,14 +58,12 @@ export default function WizardPage() {
             config={{
               networkType: data.network.type,
               coordinatorUrl: data.network.coordinatorUrl,
-              name: data.config.name,
-              tags: data.config.tags,
+              ...data.config,
             }}
           />
         )}
       </div>
 
-      {/* Navigation */}
       <div className="flex items-center justify-between">
         <button
           type="button"

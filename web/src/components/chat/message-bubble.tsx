@@ -1,14 +1,20 @@
 'use client'
 
-import type { ChatMessage } from '@/lib/types'
+import type { ChatMessage, Node } from '@/lib/types'
 import { formatTime } from '@/lib/utils'
 
 interface MessageBubbleProps {
   message: ChatMessage
+  nodes?: Node[]
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, nodes = [] }: MessageBubbleProps) {
   const isUser = message.source === 'user'
+
+  const nodeName = message.node_name
+    ?? nodes.find((n) => n.id === message.node_id)?.name
+    ?? message.node_id
+    ?? 'node'
 
   return (
     <div className="flex items-start justify-between gap-4 py-0.5 font-mono text-sm leading-relaxed">
@@ -20,7 +26,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </span>
         ) : (
           <span>
-            <span className="text-cyan">[{message.node_id ?? 'node'}]</span>
+            <span className="text-cyan">[{nodeName}]</span>
             <span className="text-text"> {message.content}</span>
           </span>
         )}

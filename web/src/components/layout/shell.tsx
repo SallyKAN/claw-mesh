@@ -14,7 +14,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <main
         className={cn(
-          'pt-10 p-6 transition-all duration-200',
+          'pt-14 px-6 pb-6 transition-all duration-200',
           collapsed ? 'ml-14' : 'ml-48'
         )}
       >

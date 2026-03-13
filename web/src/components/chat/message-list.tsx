@@ -1,16 +1,17 @@
 'use client'
 
 import { useRef, useEffect } from 'react'
-import type { ChatMessage } from '@/lib/types'
+import type { ChatMessage, Node } from '@/lib/types'
 import { MessageBubble } from './message-bubble'
 import { TypingIndicator } from './typing-indicator'
 
 interface MessageListProps {
   messages: ChatMessage[]
   sending: boolean
+  nodes?: Node[]
 }
 
-export function MessageList({ messages, sending }: MessageListProps) {
+export function MessageList({ messages, sending, nodes = [] }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -27,7 +28,7 @@ export function MessageList({ messages, sending }: MessageListProps) {
       )}
 
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+        <MessageBubble key={msg.id} message={msg} nodes={nodes} />
       ))}
 
       {sending && <TypingIndicator />}

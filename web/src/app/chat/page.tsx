@@ -36,7 +36,7 @@ export default function ChatPage() {
       </div>
 
       {/* Messages */}
-      <MessageList messages={messages} sending={sending} />
+      <MessageList messages={messages} sending={sending} nodes={nodes} />
 
       {/* Input */}
       <ChatInput
