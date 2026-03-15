@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
@@ -61,7 +62,13 @@ func (f *Forwarder) doForward(ctx context.Context, node *types.Node, msg *types.
 		return nil, fmt.Errorf("marshaling message: %w", err)
 	}
 
-	url := fmt.Sprintf("http://%s/api/v1/messages", node.Endpoint)
+	var base string
+	if strings.HasPrefix(node.Endpoint, "http://") || strings.HasPrefix(node.Endpoint, "https://") {
+		base = strings.TrimRight(node.Endpoint, "/")
+	} else {
+		base = "http://" + node.Endpoint
+	}
+	url := base + "/api/v1/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("creating forward request: %w", err)

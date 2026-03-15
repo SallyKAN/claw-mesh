@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -305,23 +306,32 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// validateEndpoint checks that an endpoint is a valid host:port and rejects
-// URLs with schemes/paths. Unless allowPrivate is true, loopback and private
+// validateEndpoint checks that an endpoint is a valid host:port or a full URL
+// (http:// or https://). Unless allowPrivate is true, loopback and private
 // IPs are rejected to prevent SSRF.
 func validateEndpoint(endpoint string, allowPrivate bool) error {
-	host, port, err := net.SplitHostPort(endpoint)
-	if err != nil {
-		return fmt.Errorf("endpoint must be host:port format: %v", err)
-	}
-	if host == "" || port == "" {
-		return fmt.Errorf("endpoint must have both host and port")
-	}
+	var host string
 
-	// Reject anything that looks like a URL (contains / or scheme).
-	for _, ch := range endpoint {
-		if ch == '/' {
-			return fmt.Errorf("endpoint must be host:port, not a URL")
+	// Accept full URLs (e.g. https://tunnel.trycloudflare.com)
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return fmt.Errorf("invalid endpoint URL: %v", err)
 		}
+		if u.Host == "" {
+			return fmt.Errorf("endpoint URL must have a host")
+		}
+		host = u.Hostname()
+	} else {
+		// Traditional host:port format
+		h, port, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return fmt.Errorf("endpoint must be host:port or a URL: %v", err)
+		}
+		if h == "" || port == "" {
+			return fmt.Errorf("endpoint must have both host and port")
+		}
+		host = h
 	}
 
 	if allowPrivate {
