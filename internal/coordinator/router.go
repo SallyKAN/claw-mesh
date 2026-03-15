@@ -3,6 +3,7 @@ package coordinator
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
@@ -113,16 +114,22 @@ func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 		return node, nil
 	}
 
-	rt.mu.RLock()
-	rules := make([]*types.RoutingRule, len(rt.rules))
-	copy(rules, rt.rules)
-	rt.mu.RUnlock()
-
 	nodes := rt.registry.List()
 	online := filterOnline(nodes)
 	if len(online) == 0 {
 		return nil, fmt.Errorf("no online nodes available")
 	}
+
+	// Smart routing: scan message content for node names.
+	if node := rt.matchNodeByContent(msg.Content, online); node != nil {
+		log.Printf("smart route: message mentions node %q, routing there", node.Name)
+		return node, nil
+	}
+
+	rt.mu.RLock()
+	rules := make([]*types.RoutingRule, len(rt.rules))
+	copy(rules, rt.rules)
+	rt.mu.RUnlock()
 
 	// Evaluate rules in order.
 	for _, rule := range rules {
@@ -149,6 +156,24 @@ func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 
 	// No rule matched — fall back to least-busy across all online nodes.
 	return leastBusy(online), nil
+}
+
+// matchNodeByContent scans message content for node names/IDs and returns
+// the first matching online node. Matches are case-insensitive.
+// Only matches if there's exactly one node mentioned to avoid ambiguity.
+func (rt *Router) matchNodeByContent(content string, online []*types.Node) *types.Node {
+	lower := strings.ToLower(content)
+	var matched []*types.Node
+	for _, n := range online {
+		name := strings.ToLower(n.Name)
+		if name != "" && strings.Contains(lower, name) {
+			matched = append(matched, n)
+		}
+	}
+	if len(matched) == 1 {
+		return matched[0]
+	}
+	return nil
 }
 
 // filterOnline returns nodes that are not offline.
