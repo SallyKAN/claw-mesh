@@ -127,10 +127,15 @@ func isTransient(err error) bool {
 // ForwardMessageAsync sends a message to the node's async endpoint, then polls
 // for status until completion. The onPartial callback is called whenever a new
 // partial response is available. The context controls the overall timeout.
+// If the node does not support the async endpoint (404), it falls back to sync.
 func (f *Forwarder) ForwardMessageAsync(ctx context.Context, node *types.Node, msg *types.Message, token string, onPartial func(string)) (*types.MessageResponse, error) {
 	// Step 1: POST to async endpoint — should return quickly.
 	accepted, err := f.doForwardAsync(ctx, node, msg, token)
 	if err != nil {
+		// Fallback to sync if node doesn't support async (404).
+		if strings.Contains(err.Error(), "status 404") {
+			return f.ForwardMessage(ctx, node, msg, token)
+		}
 		return nil, fmt.Errorf("async submit to node %s: %w", node.ID, err)
 	}
 
