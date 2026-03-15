@@ -48,10 +48,10 @@ export function NodeDetail({ node, onClose, onRemove }: NodeDetailProps) {
         </div>
         <div>
           <DetailRow label="TAGS">
-            {capabilities.tags.length > 0 ? capabilities.tags.join(', ') : '--'}
+            {capabilities.tags?.length ? capabilities.tags.join(', ') : '--'}
           </DetailRow>
           <DetailRow label="SKILLS">
-            {capabilities.skills.length > 0 ? capabilities.skills.join(', ') : '--'}
+            {capabilities.skills?.length ? capabilities.skills.join(', ') : '--'}
           </DetailRow>
           <DetailRow label="OPENCLAW">
             {node.openclaw_version || '--'}

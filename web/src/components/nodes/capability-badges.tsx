@@ -18,7 +18,7 @@ export function CapabilityBadges({ capabilities }: CapabilityBadgesProps) {
       <span className={badgeBase}>
         GPU:{capabilities.gpu ? 'YES' : 'NO'}
       </span>
-      {capabilities.tags.map((tag) => (
+      {(capabilities.tags ?? []).map((tag) => (
         <span key={tag} className={badgeBase}>
           {tag}
         </span>
