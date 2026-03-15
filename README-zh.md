@@ -1,5 +1,12 @@
 # 🦞 claw-mesh
 
+<p align="center">
+  <a href="https://github.com/SallyKAN/claw-mesh/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SallyKAN/claw-mesh/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
+  <a href="https://github.com/SallyKAN/claw-mesh/releases"><img src="https://img.shields.io/github/v/release/SallyKAN/claw-mesh?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
+  <a href="https://goreportcard.com/report/github.com/SallyKAN/claw-mesh"><img src="https://goreportcard.com/badge/github.com/SallyKAN/claw-mesh?style=for-the-badge" alt="Go Report Card"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
+</p>
+
 [English](README.md)
 
 > Your personal AI mesh — 一个 AI，所有设备。
