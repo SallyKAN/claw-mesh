@@ -1,4 +1,4 @@
-import type { Node, RoutingRule, NewRule, RouteResponse, SyncManifest, SyncNodeStatus } from './types'
+import type { Node, RoutingRule, NewRule, RouteResponse, TaskResponse, SyncManifest, SyncNodeStatus } from './types'
 
 declare global {
   interface Window {
@@ -34,11 +34,11 @@ export const meshApi = {
     remove: (id: string) => api<void>(`/api/v1/nodes/${id}`, { method: 'DELETE' }),
   },
   route: {
-    auto: (content: string) => api<RouteResponse>('/api/v1/route', {
+    auto: (content: string, async?: boolean) => api<TaskResponse>(`/api/v1/route${async ? '?async=true' : ''}`, {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
-    toNode: (nodeId: string, content: string) => api<RouteResponse>(`/api/v1/route/${nodeId}`, {
+    toNode: (nodeId: string, content: string, async?: boolean) => api<TaskResponse>(`/api/v1/route/${nodeId}${async ? '?async=true' : ''}`, {
       method: 'POST',
       body: JSON.stringify({ content }),
     }),
@@ -54,5 +54,8 @@ export const meshApi = {
   sync: {
     manifest: () => api<SyncManifest>('/api/v1/sync/manifest'),
     status: () => api<SyncNodeStatus[]>('/api/v1/sync/status'),
+  },
+  tasks: {
+    get: (id: string) => api<TaskResponse>(`/api/v1/tasks/${id}`),
   },
 }

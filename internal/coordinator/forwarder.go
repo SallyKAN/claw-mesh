@@ -62,13 +62,7 @@ func (f *Forwarder) doForward(ctx context.Context, node *types.Node, msg *types.
 		return nil, fmt.Errorf("marshaling message: %w", err)
 	}
 
-	var base string
-	if strings.HasPrefix(node.Endpoint, "http://") || strings.HasPrefix(node.Endpoint, "https://") {
-		base = strings.TrimRight(node.Endpoint, "/")
-	} else {
-		base = "http://" + node.Endpoint
-	}
-	url := base + "/api/v1/messages"
+	url := f.nodeBaseURL(node) + "/api/v1/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("creating forward request: %w", err)
@@ -128,4 +122,124 @@ func isTransient(err error) bool {
 		return true
 	}
 	return false
+}
+
+// ForwardMessageAsync sends a message to the node's async endpoint, then polls
+// for status until completion. The onPartial callback is called whenever a new
+// partial response is available. The context controls the overall timeout.
+func (f *Forwarder) ForwardMessageAsync(ctx context.Context, node *types.Node, msg *types.Message, token string, onPartial func(string)) (*types.MessageResponse, error) {
+	// Step 1: POST to async endpoint — should return quickly.
+	accepted, err := f.doForwardAsync(ctx, node, msg, token)
+	if err != nil {
+		return nil, fmt.Errorf("async submit to node %s: %w", node.ID, err)
+	}
+
+	// Step 2: Poll for status.
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			status, err := f.pollMessageStatus(ctx, node, accepted.MessageID, token)
+			if err != nil {
+				// Transient poll errors — keep trying.
+				continue
+			}
+
+			if status.PartialResponse != "" && onPartial != nil {
+				onPartial(status.PartialResponse)
+			}
+
+			switch status.Status {
+			case "completed":
+				return &types.MessageResponse{
+					MessageID: status.MessageID,
+					NodeID:    node.ID,
+					Response:  status.Response,
+				}, nil
+			case "failed":
+				errMsg := status.Error
+				if errMsg == "" {
+					errMsg = "node processing failed"
+				}
+				return nil, fmt.Errorf("node %s: %s", node.ID, errMsg)
+			}
+			// accepted / processing — keep polling.
+		}
+	}
+}
+
+func (f *Forwarder) doForwardAsync(ctx context.Context, node *types.Node, msg *types.Message, token string) (*types.NodeAsyncAccepted, error) {
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling message: %w", err)
+	}
+
+	base := f.nodeBaseURL(node)
+	url := base + "/api/v1/messages/async"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("node returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var accepted types.NodeAsyncAccepted
+	if err := json.NewDecoder(resp.Body).Decode(&accepted); err != nil {
+		return nil, fmt.Errorf("decoding accepted response: %w", err)
+	}
+	return &accepted, nil
+}
+
+func (f *Forwarder) pollMessageStatus(ctx context.Context, node *types.Node, msgID, token string) (*types.NodeMessageStatus, error) {
+	base := f.nodeBaseURL(node)
+	url := base + "/api/v1/messages/" + msgID + "/status"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status poll returned %d", resp.StatusCode)
+	}
+
+	var status types.NodeMessageStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func (f *Forwarder) nodeBaseURL(node *types.Node) string {
+	if strings.HasPrefix(node.Endpoint, "http://") || strings.HasPrefix(node.Endpoint, "https://") {
+		return strings.TrimRight(node.Endpoint, "/")
+	}
+	return "http://" + node.Endpoint
 }

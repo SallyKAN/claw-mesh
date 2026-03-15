@@ -29,18 +29,65 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const { routeTarget } = get()
       const res = routeTarget === 'auto'
-        ? await meshApi.route.auto(content)
-        : await meshApi.route.toNode(routeTarget, content)
+        ? await meshApi.route.auto(content, true)
+        : await meshApi.route.toNode(routeTarget, content, true)
 
-      const nodeMsg: ChatMessage = {
-        id: crypto.randomUUID(),
-        content: res.response,
+      const placeholderId = crypto.randomUUID()
+      const nodeName = useNodesStore.getState().nodes.find((n) => n.id === res.node_id)?.name
+
+      // Add placeholder message.
+      const placeholder: ChatMessage = {
+        id: placeholderId,
+        content: '',
         source: 'node',
         node_id: res.node_id,
-        node_name: useNodesStore.getState().nodes.find((n) => n.id === res.node_id)?.name,
+        node_name: nodeName,
         timestamp: new Date().toISOString(),
       }
-      set((state) => ({ messages: [...state.messages, nodeMsg] }))
+      set((state) => ({ messages: [...state.messages, placeholder] }))
+
+      // Poll for task completion.
+      const taskId = res.task_id
+      const poll = async () => {
+        const interval = 1500
+        while (true) {
+          await new Promise((r) => setTimeout(r, interval))
+          try {
+            const task = await meshApi.tasks.get(taskId)
+
+            if (task.partial_response) {
+              set((state) => ({
+                messages: state.messages.map((m) =>
+                  m.id === placeholderId ? { ...m, content: task.partial_response! } : m
+                ),
+              }))
+            }
+
+            if (task.status === 'completed') {
+              set((state) => ({
+                messages: state.messages.map((m) =>
+                  m.id === placeholderId ? { ...m, content: task.response ?? '' } : m
+                ),
+              }))
+              return
+            }
+
+            if (task.status === 'failed') {
+              set((state) => ({
+                messages: state.messages.map((m) =>
+                  m.id === placeholderId
+                    ? { ...m, content: `[Error] ${task.error ?? 'Task failed'}` }
+                    : m
+                ),
+              }))
+              return
+            }
+          } catch {
+            // Transient poll error — keep trying.
+          }
+        }
+      }
+      await poll()
     } finally {
       set({ sending: false })
     }

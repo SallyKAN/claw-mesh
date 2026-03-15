@@ -28,6 +28,7 @@ type Server struct {
 	router          *Router
 	health          *HealthChecker
 	forwarder       *Forwarder
+	taskStore       *TaskStore
 	syncServer      *meshsync.SyncServer
 	http            *http.Server
 	openClawVersion string
@@ -58,6 +59,7 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	rt := NewRouter(reg, store)
 	hc := NewHealthChecker(reg, 30*time.Second, 10*time.Second)
 	fwd := NewForwarder()
+	ts := NewTaskStore()
 
 	s := &Server{
 		cfg:             cfg,
@@ -65,6 +67,7 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 		router:          rt,
 		health:          hc,
 		forwarder:       fwd,
+		taskStore:       ts,
 		openClawVersion: detectLocalOpenClawVersion(),
 	}
 
@@ -81,6 +84,9 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	mux.HandleFunc("GET /api/v1/rules", s.handleListRules)
 	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
+
+	// Tasks (async message tracking)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", s.requireAuth(s.handleGetTask))
 
 	// Seed (config sync for new nodes)
 	mux.HandleFunc("GET /api/v1/seed/config", s.requireAuth(s.handleSeedConfig))
@@ -139,6 +145,7 @@ func (s *Server) Start() error {
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.health.Stop()
+	s.taskStore.Stop()
 	return s.http.Shutdown(ctx)
 }
 

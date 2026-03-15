@@ -44,6 +44,15 @@ export interface RouteResponse {
   routed_to: string
 }
 
+export interface TaskResponse {
+  task_id: string
+  node_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  response?: string
+  partial_response?: string
+  error?: string
+}
+
 export interface SyncFile {
   path: string
   sha256: string

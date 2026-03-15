@@ -174,3 +174,50 @@ type SyncNodeStatus struct {
 	FileCount       int       `json:"file_count"`
 	HasConflict     bool      `json:"has_conflict"`
 }
+
+// --- Async task types ---
+
+// TaskStatus represents the current state of an async task.
+type TaskStatus string
+
+const (
+	TaskStatusPending   TaskStatus = "pending"
+	TaskStatusRunning   TaskStatus = "running"
+	TaskStatusCompleted TaskStatus = "completed"
+	TaskStatusFailed    TaskStatus = "failed"
+)
+
+// Task tracks an async message forwarding operation.
+type Task struct {
+	ID              string     `json:"id"`
+	MessageID       string     `json:"message_id"`
+	NodeID          string     `json:"node_id"`
+	Status          TaskStatus `json:"status"`
+	Response        string     `json:"response,omitempty"`
+	PartialResponse string     `json:"partial_response,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// TaskResponse is the API response for async task operations.
+type TaskResponse struct {
+	TaskID string     `json:"task_id"`
+	NodeID string     `json:"node_id"`
+	Status TaskStatus `json:"status"`
+}
+
+// NodeAsyncAccepted is the response from a node accepting an async message.
+type NodeAsyncAccepted struct {
+	MessageID string `json:"message_id"`
+	Status    string `json:"status"`
+}
+
+// NodeMessageStatus is the response from a node's message status endpoint.
+type NodeMessageStatus struct {
+	MessageID       string `json:"message_id"`
+	Status          string `json:"status"` // accepted, processing, completed, failed
+	Response        string `json:"response,omitempty"`
+	PartialResponse string `json:"partial_response,omitempty"`
+	Error           string `json:"error,omitempty"`
+}
