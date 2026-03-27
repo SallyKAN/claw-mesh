@@ -133,7 +133,7 @@ func newUpCmd() *cobra.Command {
 			// Always allow private IPs so the local node can register as 127.0.0.1.
 			cfg.Coordinator.AllowPrivate = true
 
-			srv := coordinator.NewServer(&cfg.Coordinator)
+			srv := coordinator.NewServer(cfg)
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()

@@ -125,6 +125,12 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, fwdResp)
 }
 
+// handleListDecisions handles GET /api/v1/routing/decisions.
+// Returns the most recent routing decisions (up to 200), newest last.
+func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.router.ListDecisions())
+}
+
 // handleListRules handles GET /api/v1/rules.
 func (s *Server) handleListRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.router.ListRules())

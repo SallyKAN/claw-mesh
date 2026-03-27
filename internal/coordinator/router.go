@@ -1,31 +1,40 @@
 package coordinator
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
+const decisionLogCap = 200
+
 // Router evaluates routing rules against the node registry to pick
 // the best node for a given message.
 type Router struct {
-	mu       sync.RWMutex
-	rules    []*types.RoutingRule
-	registry *Registry
-	store    *Store
+	mu          sync.RWMutex
+	rules       []*types.RoutingRule
+	registry    *Registry
+	store       *Store
+	classifier  *LLMClassifier
+	decisionsMu sync.RWMutex
+	decisions   []*types.RoutingDecision
 }
 
 // NewRouter creates a router backed by the given registry.
 // If store is non-nil, rules are loaded from and persisted to disk.
-func NewRouter(registry *Registry, store ...*Store) *Router {
+// If classifier is non-nil, LLM intent routing is enabled.
+func NewRouter(registry *Registry, store *Store, classifier *LLMClassifier) *Router {
 	rt := &Router{
-		registry: registry,
+		registry:   registry,
+		classifier: classifier,
 	}
-	if len(store) > 0 && store[0] != nil {
-		rt.store = store[0]
+	if store != nil {
+		rt.store = store
 		if rules, err := rt.store.LoadRules(); err != nil {
 			log.Printf("WARN: failed to load persisted rules: %v", err)
 		} else if len(rules) > 0 {
@@ -100,8 +109,8 @@ func (rt *Router) ListRules() []*types.RoutingRule {
 }
 
 // Route picks the best node for a message. If msg.TargetNode is set,
-// it routes directly to that node. Otherwise it evaluates rules in order.
-// Falls back to least-busy strategy if no rule matches.
+// it routes directly to that node. Otherwise it tries LLM intent classification,
+// then evaluates rules in order, and finally falls back to least-busy.
 func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 	if msg.TargetNode != "" {
 		node := rt.registry.Get(msg.TargetNode)
@@ -111,6 +120,7 @@ func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 		if node.Status == types.NodeStatusOffline {
 			return nil, fmt.Errorf("target node %q is offline", msg.TargetNode)
 		}
+		rt.recordDecision(msg.Content, node.Name, "explicit", "")
 		return node, nil
 	}
 
@@ -120,10 +130,21 @@ func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 		return nil, fmt.Errorf("no online nodes available")
 	}
 
-	// Smart routing: scan message content for node names.
-	if node := rt.matchNodeByContent(msg.Content, online); node != nil {
-		log.Printf("smart route: message mentions node %q, routing there", node.Name)
-		return node, nil
+	// LLM intent classification — only when multiple nodes are available.
+	if rt.classifier != nil && len(online) > 1 {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if result := rt.classifier.Classify(ctx, msg.Content, online); result != nil {
+			for _, n := range online {
+				if n.Name == result.NodeName {
+					log.Printf("intent route: %q → %s (%s)", truncate(msg.Content, 40), n.Name, result.Reason)
+					rt.recordDecision(msg.Content, n.Name, "llm", result.Reason)
+					return n, nil
+				}
+			}
+			// LLM returned a node name that's not online — fall through.
+			log.Printf("intent route: LLM suggested %q but node not online, falling back", result.NodeName)
+		}
 	}
 
 	rt.mu.RLock()
@@ -134,46 +155,69 @@ func (rt *Router) Route(msg *types.Message) (*types.Node, error) {
 	// Evaluate rules in order.
 	for _, rule := range rules {
 		if isWildcard(rule) {
-			return rt.applyStrategy(rule.Strategy, online)
+			node, err := rt.applyStrategy(rule.Strategy, online)
+			if err == nil {
+				rt.recordDecision(msg.Content, node.Name, "rule", rule.ID)
+			}
+			return node, err
 		}
 		candidates := matchNodes(rule, online)
 		if len(candidates) == 0 {
 			continue
 		}
-		// If rule targets a specific node name, prefer it.
 		if rule.Target != "" {
 			for _, n := range candidates {
 				if n.Name == rule.Target || n.ID == rule.Target {
+					rt.recordDecision(msg.Content, n.Name, "rule", rule.ID)
 					return n, nil
 				}
 			}
-			// Explicit target didn't match any candidate — skip this rule
-			// instead of silently falling back to leastBusy.
 			continue
 		}
-		return leastBusy(candidates), nil
+		node := leastBusy(candidates)
+		rt.recordDecision(msg.Content, node.Name, "rule", rule.ID)
+		return node, nil
 	}
 
 	// No rule matched — fall back to least-busy across all online nodes.
-	return leastBusy(online), nil
+	node := leastBusy(online)
+	rt.recordDecision(msg.Content, node.Name, "least-busy", "")
+	return node, nil
 }
 
-// matchNodeByContent scans message content for node names/IDs and returns
-// the first matching online node. Matches are case-insensitive.
-// Only matches if there's exactly one node mentioned to avoid ambiguity.
-func (rt *Router) matchNodeByContent(content string, online []*types.Node) *types.Node {
-	lower := strings.ToLower(content)
-	var matched []*types.Node
-	for _, n := range online {
-		name := strings.ToLower(n.Name)
-		if name != "" && strings.Contains(lower, name) {
-			matched = append(matched, n)
-		}
+// recordDecision appends a routing decision to the ring buffer.
+func (rt *Router) recordDecision(content, nodeName, method, reason string) {
+	d := &types.RoutingDecision{
+		Timestamp:   time.Now(),
+		MessageSnip: truncate(content, 60),
+		NodeName:    nodeName,
+		Method:      method,
+		Reason:      reason,
 	}
-	if len(matched) == 1 {
-		return matched[0]
+	rt.decisionsMu.Lock()
+	rt.decisions = append(rt.decisions, d)
+	if len(rt.decisions) > decisionLogCap {
+		rt.decisions = rt.decisions[len(rt.decisions)-decisionLogCap:]
 	}
-	return nil
+	rt.decisionsMu.Unlock()
+}
+
+// ListDecisions returns a copy of the recent routing decisions (newest last).
+func (rt *Router) ListDecisions() []*types.RoutingDecision {
+	rt.decisionsMu.RLock()
+	defer rt.decisionsMu.RUnlock()
+	out := make([]*types.RoutingDecision, len(rt.decisions))
+	copy(out, rt.decisions)
+	return out
+}
+
+// truncate returns the first n runes of s, appending "…" if truncated.
+func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:n]) + "…"
 }
 
 // filterOnline returns nodes that are not offline.

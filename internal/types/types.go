@@ -213,6 +213,15 @@ type NodeAsyncAccepted struct {
 	Status    string `json:"status"`
 }
 
+// RoutingDecision records why a message was routed to a particular node.
+type RoutingDecision struct {
+	Timestamp   time.Time `json:"timestamp"`
+	MessageSnip string    `json:"message_snip"` // first 60 chars of message content
+	NodeName    string    `json:"node_name"`
+	Method      string    `json:"method"` // "explicit" | "llm" | "rule" | "least-busy"
+	Reason      string    `json:"reason,omitempty"`
+}
+
 // NodeMessageStatus is the response from a node's message status endpoint.
 type NodeMessageStatus struct {
 	MessageID       string `json:"message_id"`

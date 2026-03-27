@@ -35,7 +35,8 @@ type Server struct {
 }
 
 // NewServer creates a coordinator server.
-func NewServer(cfg *config.CoordinatorConfig) *Server {
+func NewServer(fullCfg *config.Config) *Server {
+	cfg := &fullCfg.Coordinator
 	reg := NewRegistry()
 
 	// Set up persistent store for routing rules.
@@ -56,7 +57,8 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 		log.Printf("WARN: could not init rule store at %s: %v", storePath, err)
 	}
 
-	rt := NewRouter(reg, store)
+	classifier := newLLMClassifierFromOpenClaw(cfg.OpenClawConfig)
+	rt := NewRouter(reg, store, classifier)
 	hc := NewHealthChecker(reg, 30*time.Second, 10*time.Second)
 	fwd := NewForwarder()
 	ts := NewTaskStore()
@@ -84,6 +86,7 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	mux.HandleFunc("GET /api/v1/rules", s.handleListRules)
 	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
+	mux.HandleFunc("GET /api/v1/routing/decisions", s.handleListDecisions)
 
 	// Tasks (async message tracking)
 	mux.HandleFunc("GET /api/v1/tasks/{id}", s.requireAuth(s.handleGetTask))
