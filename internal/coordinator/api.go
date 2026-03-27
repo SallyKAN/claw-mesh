@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -129,6 +130,123 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 // Returns the most recent routing decisions (up to 200), newest last.
 func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.router.ListDecisions())
+}
+
+// handleStreamAuto handles POST /api/v1/stream — auto-route with SSE streaming.
+func (s *Server) handleStreamAuto(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+		Source  string `json:"source"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Content == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
+		return
+	}
+
+	msgID, err := generateID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate message ID"})
+		return
+	}
+
+	msg := &types.Message{
+		ID:        msgID,
+		Content:   req.Content,
+		Source:    req.Source,
+		CreatedAt: time.Now(),
+	}
+
+	node, err := s.router.Route(msg)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Disable write deadline for long-lived streaming responses.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
+	log.Printf("streaming message %s to node %s (%s)", msg.ID, node.ID, node.Name)
+	nodeToken := s.registry.GetNodeToken(node.ID)
+	if err := s.forwarder.ForwardMessageStream(r.Context(), node, msg, nodeToken, node.ID, w); err != nil {
+		log.Printf("stream failed for message %s: %v", msg.ID, err)
+		errChunk, _ := json.Marshal(types.StreamChunk{Type: "error", Error: err.Error()})
+		fmt.Fprintf(w, "data: %s\n\n", errChunk)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+}
+
+// handleStreamToNode handles POST /api/v1/stream/{nodeId} — direct-route with SSE streaming.
+func (s *Server) handleStreamToNode(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("nodeId")
+
+	var req struct {
+		Content string `json:"content"`
+		Source  string `json:"source"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.Content == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
+		return
+	}
+
+	msgID, err := generateID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate message ID"})
+		return
+	}
+
+	msg := &types.Message{
+		ID:         msgID,
+		Content:    req.Content,
+		Source:     req.Source,
+		TargetNode: nodeID,
+		CreatedAt:  time.Now(),
+	}
+
+	node, err := s.router.Route(msg)
+	if err != nil {
+		n := s.registry.Get(nodeID)
+		if n == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		} else if n.Status == types.NodeStatusOffline {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		} else {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
+	log.Printf("streaming message %s to node %s (%s)", msg.ID, node.ID, node.Name)
+	nodeToken := s.registry.GetNodeToken(node.ID)
+	if err := s.forwarder.ForwardMessageStream(r.Context(), node, msg, nodeToken, node.ID, w); err != nil {
+		log.Printf("stream failed for message %s: %v", msg.ID, err)
+		errChunk, _ := json.Marshal(types.StreamChunk{Type: "error", Error: err.Error()})
+		fmt.Fprintf(w, "data: %s\n\n", errChunk)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
 }
 
 // handleListRules handles GET /api/v1/rules.

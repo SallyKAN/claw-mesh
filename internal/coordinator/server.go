@@ -83,6 +83,8 @@ func NewServer(fullCfg *config.Config) *Server {
 	// Routing
 	mux.HandleFunc("POST /api/v1/route", s.requireAuth(s.handleRouteAuto))
 	mux.HandleFunc("POST /api/v1/route/{nodeId}", s.requireAuth(s.handleRouteToNode))
+	mux.HandleFunc("POST /api/v1/stream", s.requireAuth(s.handleStreamAuto))
+	mux.HandleFunc("POST /api/v1/stream/{nodeId}", s.requireAuth(s.handleStreamToNode))
 	mux.HandleFunc("GET /api/v1/rules", s.handleListRules)
 	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
@@ -127,7 +129,7 @@ func NewServer(fullCfg *config.Config) *Server {
 		Handler:           recoverMiddleware(requestLogger(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      0, // disabled: streaming endpoints use per-request deadlines
 		IdleTimeout:       120 * time.Second,
 	}
 
