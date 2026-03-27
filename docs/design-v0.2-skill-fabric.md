@@ -243,14 +243,14 @@ claw-mesh route add --match "skill-type:agent-skill" --target "main-node"
     "name": "docker",
     "type": "tool",
     "node_ids": ["node-a1b2", "node-c3d4"],
-    "node_names": ["mac-mini", "linux-gpu"]
+    "node_names": ["mac-mini", "linux-dev"]
   },
   {
     "name": "stable-diffusion",
     "type": "custom",
     "category": "image-gen",
-    "node_ids": ["node-c3d4"],
-    "node_names": ["linux-gpu"]
+    "node_ids": ["node-e5f6"],
+    "node_names": ["gpu-vps"]
   }
 ]
 ```
@@ -433,13 +433,13 @@ UI 展示多步任务时，显示为可折叠的步骤列表：
 ┌─────────────────────────────────────────────┐
 │ 🤖 AI 正在执行任务规划（3 步）               │
 │                                             │
-│  ✅ Step 1: python → linux-gpu              │
+│  ✅ Step 1: python → gpu-vps                │
 │     "训练模型完成，准确率 95%"                │
 │                                             │
 │  ⏳ Step 2: xcode → mac-mini                │
 │     正在执行...                              │
 │                                             │
-│  ⬜ Step 3: docker → linux-gpu              │
+│  ⬜ Step 3: docker → linux-dev              │
 │     等待中                                   │
 └─────────────────────────────────────────────┘
 ```
@@ -469,10 +469,10 @@ Your job: decompose the user's request into a sequence of steps,
 each targeting a specific skill available in the mesh.
 
 Available skills across the mesh:
-- "docker" (tool) on nodes: linux-gpu
+- "docker" (tool) on nodes: linux-dev
 - "xcode" (tool) on nodes: mac-mini
-- "stable-diffusion" (custom, image-gen) on nodes: linux-gpu
-- "python" (tool) on nodes: linux-gpu, mac-mini
+- "stable-diffusion" (custom, image-gen) on nodes: gpu-vps
+- "python" (tool) on nodes: gpu-vps, linux-dev, mac-mini
 ...
 
 Rules:
@@ -532,7 +532,7 @@ for each step in plan.Steps:
       "id": "step-1",
       "skill": "python",
       "status": "completed",
-      "node_used": "linux-gpu",
+      "node_used": "gpu-vps",
       "response": "模型训练完成，准确率 95%..."
     },
     {
@@ -563,67 +563,164 @@ claw-mesh skills
 
 ## 7. 端到端场景
 
-以下场景基于一个典型的三节点 mesh：
+以下场景基于一个典型的四节点 mesh（反映真实硬件配置）：
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Coordinator (:9180)                       │
-└──────────┬──────────────┬──────────────┬────────────────────┘
-           │              │              │
-   ┌───────▼──────┐ ┌────▼───────┐ ┌────▼──────────────┐
-   │  mac-mini    │ │ linux-gpu  │ │ pi-home            │
-   │  darwin/arm64│ │ linux/amd64│ │ linux/arm64         │
-   │  16GB, Metal │ │ 64GB, A100 │ │ 4GB, no GPU         │
-   │              │ │            │ │                     │
-   │  skills:     │ │  skills:   │ │  skills:            │
-   │  - xcode     │ │  - docker  │ │  - python           │
-   │  - golang    │ │  - python  │ │  - home-automation  │
-   │  - ios-build │ │  - golang  │ │    (custom)         │
-   │    (agent)   │ │  - sd-xl   │ │  - sensor-reader    │
-   │  - cocoapods │ │    (custom)│ │    (agent)          │
-   │    (tool)    │ │  - k8s     │ │                     │
-   └──────────────┘ └────────────┘ └─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          Coordinator (:9180)                                  │
+└─────┬──────────────┬──────────────┬──────────────┬───────────────────────────┘
+      │              │              │              │
+┌─────▼──────┐ ┌─────▼──────┐ ┌────▼──────┐ ┌────▼──────────────┐
+│ mac-mini   │ │ linux-dev  │ │ gpu-vps   │ │ pi-home            │
+│ darwin/    │ │ linux/     │ │ linux/    │ │ linux/arm64         │
+│ arm64      │ │ amd64      │ │ amd64     │ │ 4GB, no GPU         │
+│ 16GB,Metal │ │ 32GB,noGPU │ │ 80GB,A100 │ │                     │
+│            │ │            │ │ (云端按需) │ │  skills:            │
+│  skills:   │ │  skills:   │ │           │ │  - python           │
+│  - xcode   │ │  - docker  │ │  skills:  │ │  - gpio-sensors     │
+│  - golang  │ │  - python  │ │  - python │ │    (custom)         │
+│  - ios-sim │ │  - golang  │ │  - docker │ │  - home-automation  │
+│    (agent) │ │  - k8s     │ │  - sd-xl  │ │    (custom)         │
+│  - ios-    │ │  - rust    │ │   (custom)│ │  - sensor-reader    │
+│    build   │ │            │ │  - cuda   │ │    (agent)          │
+│    (agent) │ │            │ │   (tool)  │ │  - iot-developer    │
+│  - cocoa-  │ │            │ │           │ │    (agent)          │
+│    pods    │ │            │ │           │ │                     │
+│    (tool)  │ │            │ │           │ │                     │
+└────────────┘ └────────────┘ └───────────┘ └─────────────────────┘
+  内网 LAN       内网 LAN      公网 VPS        内网 LAN
 ```
 
-### 场景 1：Skill 感知路由 — 单步自动路由
+**四节点定位**：
+- **mac-mini** — iOS/macOS 独占能力（Xcode、模拟器），本地开发主力
+- **linux-dev** — Docker/K8s、通用开发、CI/CD，无 GPU
+- **gpu-vps** — 云端按需 GPU（Stable Diffusion、ML 训练、CUDA），公网节点
+- **pi-home** — IoT 边缘设备（传感器、智能家居），低功耗常驻
 
-**用户操作**：
+### 场景 1：Skill 感知路由 — "帮我跑一下 iOS 模拟器看看这个 bug 复现不"
+
+**为什么只有 Mac 能做**：`simctl`（iOS 模拟器）是 macOS 独占工具。社区已有现成 skill：[ios-simulator-skill](https://skills.sh/conorluddy/ios-simulator-skill/ios-simulator-skill)（358 installs）。
+
+**节点 skill 配置**：
+
+Mac 上安装 agent skill：
 ```bash
-claw-mesh send --auto "帮我跑一下 docker compose up"
+npx skills add conorluddy/ios-simulator-skill@ios-simulator-skill
 ```
 
-**系统行为**：
-1. Coordinator 收到消息，进入 Router
-2. 已有规则 `match: { requires_skill: "docker" }` → strategy: least-busy
-3. Router 扫描在线节点，只有 `linux-gpu` 有 docker skill
-4. Forwarder 转发消息到 `linux-gpu` 的 OpenClaw Gateway
-5. Gateway 执行 `docker compose up`，返回结果
-6. 用户收到响应
-
-**关键点**：用户不需要知道哪台机器有 docker，路由自动处理。
-
-### 场景 2：Agent Skill 可执行性判断
-
-**节点配置**：三个节点都通过 git 同步了 `.claude/skills/ios-build.md`：
-
+安装后 `~/.claude/skills/ios-simulator-skill.md` 文件头部：
 ```markdown
 ---
 requires:
   os: darwin
-  tools: [xcode, cocoapods]
+  tools: [xcodebuild]
 ---
-# iOS Build Skill
-帮用户构建 iOS 项目，运行 xcodebuild...
 ```
 
-**各节点判断**：
-- `mac-mini`：os=darwin ✓, xcode ✓, cocoapods ✓ → `executable=true`
-- `linux-gpu`：os=linux ✗ → `executable=false`
-- `pi-home`：os=linux ✗ → `executable=false`
+**用户操作**（Web UI 输入框，和平时发消息一样）：
+```
+帮我跑一下 iOS 模拟器看看这个 bug 复现不
+```
 
-**结果**：三个节点的 `DetailedSkills` 都包含 `ios-build`，但只有 `mac-mini` 的 `Skills` 扁平列表包含它。路由 `requires_skill: "ios-build"` 只会匹配到 `mac-mini`。
+**系统行为**：
+```
+POST /api/v1/route → handleRouteAuto
+  → Planner 分析：单步任务，需要 ios-simulator-skill
+  → Router: requires_skill="ios-simulator-skill"
+    ├─ mac-mini: has ios-simulator-skill (executable=true, os=darwin ✓) ✓
+    ├─ linux-dev: has ios-simulator-skill 文件 (executable=false, os≠darwin) ✗
+    ├─ gpu-vps: has ios-simulator-skill 文件 (executable=false, os≠darwin) ✗
+    └─ pi-home: has ios-simulator-skill 文件 (executable=false, os≠darwin) ✗
+  → 选中 mac-mini
+  → Forwarder → mac-mini Gateway
+  → Gateway 执行 xcrun simctl boot "iPhone 16" && ...
+  → 响应: "已在 iPhone 16 模拟器上启动 app，截图如下..."
+```
 
-### 场景 3：多步任务规划 — 跨机器 AI 图片生成 + iOS 集成
+**关键点**：四个节点都通过 git 同步了 skill 文件，但只有 Mac 满足 `requires.os: darwin`，路由自动选中。
+
+### 场景 2：Skill 感知路由 — "用 GPU 生成一张赛博朋克风格的 logo"
+
+**为什么只有 GPU VPS 能做**：Stable Diffusion 需要 NVIDIA CUDA + 大显存。社区已有现成 skill：[stable-diffusion-image-generation](https://skills.sh/davila7/claude-code-templates/stable-diffusion-image-generation)（256 installs）。
+
+**节点 skill 配置**：
+
+GPU VPS 上安装 agent skill：
+```bash
+npx skills add davila7/claude-code-templates@stable-diffusion-image-generation
+```
+
+同时在 `skills.yaml` 中声明本地 SD 环境：
+```yaml
+skills:
+  - name: "sd-xl"
+    description: "Stable Diffusion XL local inference via ComfyUI"
+    category: "image-gen"
+```
+
+**用户操作**（Web UI）：
+```
+用 GPU 生成一张赛博朋克风格的 logo
+```
+
+**系统行为**：
+```
+POST /api/v1/route → handleRouteAuto
+  → Planner 分析：单步任务，需要 sd-xl 或 stable-diffusion skill
+  → Router: requires_skill="sd-xl"
+    ├─ gpu-vps: has sd-xl (custom, executable=true) + nvidia-gpu (tool) ✓
+    ├─ mac-mini: no sd-xl ✗
+    ├─ linux-dev: no sd-xl ✗
+    └─ pi-home: no sd-xl ✗
+  → 选中 gpu-vps
+  → Forwarder → gpu-vps Gateway
+  → Gateway 调用 ComfyUI API 生成图片
+  → 响应: "已生成赛博朋克风格 logo，分辨率 1024x1024..."
+```
+
+### 场景 3：Skill 感知路由 — "读一下家里温度传感器，看看今天温度变化"
+
+**为什么只有 Pi 能做**：GPIO 物理引脚连接传感器，只有 Pi 有。社区参考：[edge-iot](https://skills.sh/miles990/claude-software-skills/edge-iot)、[iot-developer](https://skills.sh/daffy0208/ai-dev-standards/iot-developer)。
+
+**节点 skill 配置**：
+
+Pi 上的 `skills.yaml`：
+```yaml
+skills:
+  - name: "gpio-sensors"
+    description: "读取 GPIO 连接的 DHT22 温湿度传感器，返回 JSON 数据"
+    category: "iot"
+  - name: "home-network"
+    description: "局域网设备发现和控制（HomeAssistant API）"
+    category: "iot"
+```
+
+Pi 上安装 IoT agent skill：
+```bash
+npx skills add daffy0208/ai-dev-standards@iot-developer
+```
+
+**用户操作**（Web UI）：
+```
+读一下家里温度传感器，看看今天温度变化
+```
+
+**系统行为**：
+```
+POST /api/v1/route → handleRouteAuto
+  → Planner 分析：单步任务，需要 gpio-sensors skill
+  → Router: requires_skill="gpio-sensors"
+    ├─ pi-home: has gpio-sensors (custom, executable=true) ✓
+    ├─ mac-mini: no gpio-sensors ✗
+    ├─ linux-dev: no gpio-sensors ✗
+    └─ gpu-vps: no gpio-sensors ✗
+  → 选中 pi-home
+  → Forwarder → pi-home Gateway
+  → Gateway 执行 python3 read_dht22.py，读取 GPIO 数据
+  → 响应: "当前温度 23.5°C，湿度 62%。今日变化：最低 18°C (06:00)，最高 26°C (14:00)..."
+```
+
+### 场景 4：多步任务规划 — 跨机器 AI 图片生成 + iOS 集成
 
 **用户操作**（Web UI 或 CLI，同一个入口）：
 ```bash
@@ -636,9 +733,10 @@ Step 1 — `handleRouteAuto` 检测到 planner 已配置，调用 LLM：
 ```
 Coordinator → POST planner LLM
 System prompt 包含可用 skills:
-  - sd-xl (custom, image-gen) on linux-gpu
+  - sd-xl (custom, image-gen) on gpu-vps
   - ios-build (agent-skill) on mac-mini
   - xcode (tool) on mac-mini
+  - docker (tool) on linux-dev
   ...
 
 LLM 返回:
@@ -657,8 +755,8 @@ Step 2 — 多步 → 创建 TaskPlan，异步执行，立即返回：
 
 Step 3 — 执行 step-1：
 ```
-Router: requires_skill="sd-xl" → 匹配 linux-gpu
-Forwarder → linux-gpu OpenClaw Gateway
+Router: requires_skill="sd-xl" → 匹配 gpu-vps
+Forwarder → gpu-vps OpenClaw Gateway
 Gateway 调用 Stable Diffusion，生成图片
 Response: "图片已生成，保存在 /tmp/launch-cyberpunk.png，base64: ..."
 ```
@@ -684,7 +782,7 @@ plan.Status = completed
 ┌─────────────────────────────────────────────┐
 │ 🤖 任务规划执行完成（2 步）                   │
 │                                             │
-│  ✅ Step 1: sd-xl → linux-gpu (23s)         │
+│  ✅ Step 1: sd-xl → gpu-vps (23s)         │
 │     "图片已生成，保存在 /tmp/launch-..."      │
 │                                             │
 │  ✅ Step 2: ios-build → mac-mini (45s)      │
@@ -696,12 +794,12 @@ plan.Status = completed
 ```bash
 $ claw-mesh plan status plan-x7y8z9
 Plan: plan-x7y8z9 [completed]
-  Step 1: sd-xl → linux-gpu ✓ (23s)
+  Step 1: sd-xl → gpu-vps ✓ (23s)
   Step 2: ios-build → mac-mini ✓ (45s)
 Result: 已将启动图添加到 Assets.xcassets，build succeeded
 ```
 
-### 场景 4：多步任务规划 — 失败与回退
+### 场景 5：多步任务规划 — 失败与回退
 
 **用户操作**：
 ```bash
@@ -711,8 +809,8 @@ claw-mesh send --auto "在 GPU 服务器上训练模型，然后部署到 K8s"
 **Planner 拆解为 2 步，异步执行**：
 
 ```
-Step 1: python → linux-gpu ✓ "模型训练完成，保存在 /models/resnet-v2.pt"
-Step 2: k8s → linux-gpu ... 发送失败（kubectl 连接超时）
+Step 1: python → gpu-vps ✓ "模型训练完成，保存在 /models/resnet-v2.pt"
+Step 2: k8s → linux-dev ... 发送失败（kubectl 连接超时）
   → Forwarder 重试 1 次 ... 仍然失败
   → step-2.Status = failed, step-2.Error = "kubectl: connection timed out"
   → plan.Status = failed
@@ -723,20 +821,20 @@ Step 2: k8s → linux-gpu ... 发送失败（kubectl 连接超时）
 ┌─────────────────────────────────────────────┐
 │ ⚠️ 任务规划执行失败（2 步，1 步失败）         │
 │                                             │
-│  ✅ Step 1: python → linux-gpu (180s)       │
+│  ✅ Step 1: python → gpu-vps (180s)       │
 │     "模型训练完成，保存在 /models/resnet..."  │
 │                                             │
-│  ❌ Step 2: k8s → linux-gpu                 │
+│  ❌ Step 2: k8s → linux-dev                 │
 │     "kubectl: connection timed out"          │
 └─────────────────────────────────────────────┘
 ```
 
 用户可以修复 K8s 连接后手动重试：
 ```bash
-claw-mesh send --node linux-gpu "部署 /models/resnet-v2.pt 到 K8s 集群"
+claw-mesh send --node linux-dev "部署 /models/resnet-v2.pt 到 K8s 集群"
 ```
 
-### 场景 5：边缘设备 — 树莓派 IoT 数据采集 + 云端分析
+### 场景 6：边缘设备 — 树莓派 IoT 数据采集 + 云端分析
 
 **pi-home 的 skills.yaml**：
 ```yaml
@@ -776,42 +874,43 @@ claw-mesh send --auto "读取家里的温湿度数据，分析趋势并生成可
 **执行**：
 ```
 Step 1: sensor-reader → pi-home ✓ (读取 GPIO，输出 CSV)
-Step 2: python → linux-gpu ✓ (pi-home 也有 python，但 linux-gpu 更空闲且内存大，least-busy 选中)
+Step 2: python → linux-dev ✓ (pi-home 也有 python，但 linux-dev 更空闲且内存大，least-busy 选中)
 ```
 
 **关键点**：Pi 负责数据采集（只有它连着传感器），计算密集的分析任务自动路由到更强的机器。
 
-### 场景 6：Skill 聚合视图 — 运维可观测
+### 场景 7：Skill 聚合视图 — 运维可观测
 
 **用户操作**：
 ```bash
 $ claw-mesh skills
 SKILL              TYPE          CATEGORY    NODES
-docker             tool          -           linux-gpu
-golang             tool          -           mac-mini, linux-gpu
+docker             tool          -           linux-dev, gpu-vps
+golang             tool          -           mac-mini, linux-dev
 home-automation    custom        iot         pi-home
 ios-build          agent-skill   -           mac-mini
-k8s                tool          -           linux-gpu
-python             tool          -           linux-gpu, mac-mini, pi-home
-sd-xl              custom        image-gen   linux-gpu
+k8s                tool          -           linux-dev
+python             tool          -           linux-dev, mac-mini, gpu-vps, pi-home
+sd-xl              custom        image-gen   gpu-vps
 sensor-reader      agent-skill   iot         pi-home
 xcode              tool          -           mac-mini
 
 $ claw-mesh nodes
 NAME         STATUS   OS      ARCH    GPU    MEM    SKILLS
 mac-mini     online   darwin  arm64   yes    16GB   5 (2 agent, 3 tool)
-linux-gpu    online   linux   amd64   yes    64GB   5 (1 custom, 4 tool)
-pi-home      online   linux   arm64   no     4GB    3 (1 agent, 1 custom, 1 tool)
+linux-dev    online   linux   amd64   no     32GB   5 (4 tool, 1 custom)
+gpu-vps      online   linux   amd64   yes    80GB   4 (1 custom, 1 tool, 2 tool)
+pi-home      online   linux   arm64   no     4GB    4 (1 agent, 2 custom, 1 tool)
 ```
 
-### 场景 7：节点下线 Failover + Skill 路由
+### 场景 8：节点下线 Failover + Skill 路由
 
-**初始状态**：`linux-gpu` 和 `mac-mini` 都有 `python` skill。
+**初始状态**：`gpu-vps` 和 `mac-mini` 都有 `python` skill。
 
-**事件**：`linux-gpu` 断电下线。
+**事件**：`gpu-vps` 云端实例被回收下线。
 
 ```
-Health checker: linux-gpu 心跳超时 → 标记 offline
+Health checker: gpu-vps 心跳超时 → 标记 offline
 ```
 
 **用户操作**：
@@ -822,31 +921,32 @@ claw-mesh send --auto "跑一下 Python 单元测试"
 **路由行为**：
 ```
 Router: requires_skill="python"
-  → linux-gpu: offline ✗
+  → gpu-vps: offline ✗
   → mac-mini: online, has python ✓
+  → linux-dev: online, has python ✓
   → pi-home: online, has python ✓
   → least-busy 选择 mac-mini（16GB > 4GB，更适合跑测试）
 ```
 
-**关键点**：用户无感知。GPU 机器挂了，Python 任务自动切到 Mac。如果任务需要 `sd-xl`（只有 linux-gpu 有），则返回错误"no online node with required skill"。
+**关键点**：用户无感知。GPU VPS 被回收了，Python 任务自动切到 Mac 或 Linux。如果任务需要 `sd-xl`（只有 gpu-vps 有），则返回错误"no online node with required skill"。
 
-### 场景 8：心跳 Capabilities 刷新 — 动态 Skill 变更
+### 场景 9：心跳 Capabilities 刷新 — 动态 Skill 变更
 
-**事件**：运维在 `linux-gpu` 上安装了 `rustc`。
+**事件**：运维在 `linux-dev` 上安装了 `rustc`。
 
 ```
-T+0:    linux-gpu skills = [docker, python, golang, k8s, sd-xl]
+T+0:    linux-dev skills = [docker, python, golang, k8s]
 T+2.5m: 第 10 次心跳，触发 capabilities 刷新
         DetectCapabilities() 重新扫描 → 发现 rustc
         HeartbeatRequest.Capabilities = { ..., skills: [..., "rust"] }
         Coordinator 更新 registry
-T+2.5m: linux-gpu skills = [docker, python, golang, k8s, sd-xl, rust]
+T+2.5m: linux-dev skills = [docker, python, golang, k8s, rust]
 ```
 
 **用户操作**：
 ```bash
 $ claw-mesh skills | grep rust
-rust               tool          -           linux-gpu
+rust               tool          -           linux-dev
 ```
 
 无需重启节点，skill 自动刷新。
@@ -855,7 +955,7 @@ rust               tool          -           linux-gpu
 
 ## 8. Personal AI Fabric 定位
 
-### 7.1 叙事升级
+### 8.1 叙事升级
 
 从：
 > "Multi-Gateway orchestrator for OpenClaw. One mesh, many claws."
@@ -865,13 +965,13 @@ rust               tool          -           linux-gpu
 
 核心叙事：你的所有设备组成一个私有能力网络。每个设备贡献自己的独特能力（GPU、Xcode、Docker、公网 IP）。AI 助手看到的是一个统一的能力平面，不关心能力在哪台机器上。
 
-### 7.2 三个核心概念
+### 8.2 三个核心概念
 
 1. **Unified Capability Plane** — 所有设备的能力汇聚为一个平面，AI 按需调用
 2. **Skill-Aware Routing** — 消息自动路由到拥有所需 skill 的节点
 3. **Task Plan** — 复杂任务自动拆解为跨节点的多步执行
 
-### 7.3 文档更新范围
+### 8.3 文档更新范围
 
 - `README.md` — 重写，Personal AI Fabric 叙事
 - `README-zh.md` — 中文版
@@ -880,7 +980,7 @@ rust               tool          -           linux-gpu
 
 ---
 
-## 8. 文件变更清单
+## 9. 文件变更清单
 
 ### 修改文件
 
@@ -910,15 +1010,15 @@ rust               tool          -           linux-gpu
 
 ---
 
-## 9. Config Seed — 新节点配置同步
+## 10. Config Seed — 新节点配置同步
 
-### 9.1 问题
+### 10.1 问题
 
 新节点 `join --auto-install` 时，安装完 OpenClaw 后需要手动配置 API key、model、provider 等。这些配置和主节点完全一样，重复配置既麻烦又容易出错。
 
 同时，根据四层同步模型，身份层（SOUL.md、IDENTITY.md、AGENTS.md、`.claude/skills/*.md`）和记忆层（MEMORY.md、`memory/*.md`）也应该在新节点加入时同步过去。
 
-### 9.2 设计
+### 10.2 设计
 
 Coordinator 本地读取主节点的 OpenClaw 配置和 workspace 文件，通过 API 分发给新节点。
 
@@ -939,7 +1039,7 @@ coordinator:
 | GET | /api/v1/seed/config | Bearer Token | 返回 OpenClaw 配置（去掉 channel/port 等本地字段） |
 | GET | /api/v1/seed/workspace | Bearer Token | 返回身份层 + 记忆层文件（JSON 打包） |
 
-### 9.3 Config Seed 过滤规则
+### 10.3 Config Seed 过滤规则
 
 从主节点 `openclaw.json` 中读取完整配置，去掉以下本地字段后返回：
 
@@ -957,7 +1057,7 @@ coordinator:
 - `persona` / `soul` — 人格配置
 - 其他非本地字段
 
-### 9.4 Workspace Seed 内容
+### 10.4 Workspace Seed 内容
 
 按四层模型同步身份层和记忆层文件：
 
@@ -981,7 +1081,7 @@ coordinator:
 - `openclaw.json` — 走 seed/config 单独处理
 - `skills/` — v0.2 后续通过 git-based sync 处理
 
-### 9.5 新节点 Join 流程
+### 10.5 新节点 Join 流程
 
 ```
 claw-mesh join <coordinator> --auto-install
@@ -1003,7 +1103,7 @@ claw-mesh join <coordinator> --auto-install
 - `--sync-config` — 从 coordinator 拉取 OpenClaw 配置（默认 true when --auto-install）
 - `--no-sync-config` — 跳过配置同步（使用本地已有配置）
 
-### 9.6 安全考虑
+### 10.6 安全考虑
 
 - 所有 seed API 需要 Bearer token 认证（复用 mesh token）
 - API key 在传输中通过 HTTPS 保护（生产环境应启用 TLS）
@@ -1011,7 +1111,7 @@ claw-mesh join <coordinator> --auto-install
 
 ---
 
-## 10. 实施顺序
+## 11. 实施顺序
 
 **Phase 0: Config Seed（新节点配置同步）**
 1. config/config.go — CoordinatorConfig 新增 WorkspaceDir、OpenClawConfig
@@ -1053,7 +1153,7 @@ claw-mesh join <coordinator> --auto-install
 
 ---
 
-## 10. 注意事项
+## 12. 注意事项
 
 1. **向后兼容**：`server.go` 的 `decodeJSON` 使用 `DisallowUnknownFields()`，新增字段后旧 coordinator 会拒绝新 node。这是 minor version bump 可接受的 breaking change。
 

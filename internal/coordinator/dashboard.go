@@ -17,25 +17,37 @@ func DashboardHandler(token string) http.Handler {
 		panic("failed to load embedded dashboard: " + err.Error())
 	}
 
-	// Read index.html once at startup for token injection.
-	indexBytes, err := fs.ReadFile(sub, "index.html")
-	if err != nil {
-		panic("failed to read embedded index.html: " + err.Error())
-	}
-	indexHTML := strings.Replace(
-		string(indexBytes),
-		"<head>",
-		"<head><script>window.__TOKEN__=\""+token+"\";</script>",
-		1,
-	)
-
 	fileServer := http.FileServer(http.FS(sub))
 
+	// Pre-inject token into all page index.html files (SPA sub-routes).
+	injectedPages := make(map[string][]byte)
+	fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if d.Name() == "index.html" {
+			raw, readErr := fs.ReadFile(sub, path)
+			if readErr != nil {
+				return nil
+			}
+			injected := strings.Replace(
+				string(raw),
+				"<head>",
+				"<head><script>window.__TOKEN__=\""+token+"\";</script>",
+				1,
+			)
+			// Normalize: "chat/index.html" -> "/chat/"
+			servePath := "/" + strings.TrimSuffix(path, "index.html")
+			injectedPages[servePath] = []byte(injected)
+			injectedPages[servePath+"index.html"] = []byte(injected)
+		}
+		return nil
+	})
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Serve injected index.html for root or index.html requests.
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+		if page, ok := injectedPages[r.URL.Path]; ok {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(indexHTML))
+			w.Write(page)
 			return
 		}
 		fileServer.ServeHTTP(w, r)

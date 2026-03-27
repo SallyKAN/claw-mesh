@@ -1,6 +1,7 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -252,39 +253,46 @@ func startOpenClaw(opts RuntimeStartOpts) error {
 		return err
 	}
 
-	// Resolve provider + key from opts or environment.
-	provider, keyFlag, keyVal, err := resolveProviderOpts(opts)
-	if err != nil {
-		return err
-	}
-
 	// Build onboard command.
 	args := []string{"onboard", "--non-interactive", "--accept-risk", "--install-daemon"}
-	if provider != "" {
-		args = append(args, "--auth-choice", provider)
-	}
-	if keyFlag != "" && keyVal != "" {
-		args = append(args, "--"+keyFlag, keyVal)
-	}
-	if opts.BaseURL != "" {
-		args = append(args, "--custom-base-url", opts.BaseURL)
-		// Determine compatibility mode from provider hint or default to anthropic.
-		compat := "anthropic"
-		if opts.Provider == "openai" || opts.Provider == "custom" {
-			compat = "openai"
+
+	// Resolve provider + key from opts or environment.
+	// If that fails, check if local openclaw.json already has auth config
+	// (e.g. from seed config sync) — if so, onboard can read it directly.
+	provider, keyFlag, keyVal, err := resolveProviderOpts(opts)
+	if err != nil {
+		if localConfigHasAuth() {
+			log.Println("no explicit API key, but local openclaw.json has auth config — using existing config")
+		} else {
+			return err
 		}
-		args = append(args, "--custom-compatibility", compat)
-		// custom-api-key requires a model ID; provide a sensible default.
-		if opts.Model == "" {
-			if compat == "anthropic" {
-				opts.Model = "claude-sonnet-4-20250514"
-			} else {
-				opts.Model = "gpt-4o"
+	} else {
+		if provider != "" {
+			args = append(args, "--auth-choice", provider)
+		}
+		if keyFlag != "" && keyVal != "" {
+			args = append(args, "--"+keyFlag, keyVal)
+		}
+		if opts.BaseURL != "" {
+			args = append(args, "--custom-base-url", opts.BaseURL)
+			// Determine compatibility mode from provider hint or default to anthropic.
+			compat := "anthropic"
+			if opts.Provider == "openai" || opts.Provider == "custom" {
+				compat = "openai"
+			}
+			args = append(args, "--custom-compatibility", compat)
+			// custom-api-key requires a model ID; provide a sensible default.
+			if opts.Model == "" {
+				if compat == "anthropic" {
+					opts.Model = "claude-sonnet-4-20250514"
+				} else {
+					opts.Model = "gpt-4o"
+				}
 			}
 		}
-	}
-	if opts.Model != "" {
-		args = append(args, "--custom-model-id", opts.Model)
+		if opts.Model != "" {
+			args = append(args, "--custom-model-id", opts.Model)
+		}
 	}
 
 	log.Printf("starting OpenClaw: %s %s", binPath, strings.Join(args, " "))
@@ -387,6 +395,27 @@ func resolveProviderOpts(opts RuntimeStartOpts) (provider, keyFlag, keyVal strin
 	return "", "", "", fmt.Errorf("no API key provided: pass --api-key or set ANTHROPIC_API_KEY / OPENAI_API_KEY")
 }
 
+// localConfigHasAuth checks if the local openclaw.json already has auth/model config.
+func localConfigHasAuth() bool {
+	cfgPath := localOpenClawConfigPath()
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	// Check for models.providers or auth.profiles keys.
+	if _, ok := raw["models"]; ok {
+		return true
+	}
+	if _, ok := raw["auth"]; ok {
+		return true
+	}
+	return false
+}
+
 // waitForGateway polls the endpoint until it's reachable or timeout expires.
 func waitForGateway(endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -425,4 +454,62 @@ func getSystemMemoryMB() int {
 		return int(bytes / 1024 / 1024)
 	}
 	return 0
+}
+
+// UpgradeOpenClaw upgrades OpenClaw to the specified version using npm.
+func UpgradeOpenClaw(targetVersion string) error {
+	if !hasNodeJS() {
+		return fmt.Errorf("OpenClaw requires Node.js for upgrade")
+	}
+	log.Printf("upgrading OpenClaw to %s...", targetVersion)
+	pkg := "openclaw@" + targetVersion
+
+	globalPrefix := npmGlobalPrefix()
+	if globalPrefix != "" && !isDirWritable(globalPrefix) {
+		home, _ := os.UserHomeDir()
+		prefix := home + "/.local"
+		cmd := exec.Command("npm", "install", "-g", "--prefix", prefix, pkg)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	cmd := exec.Command("npm", "install", "-g", pkg)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// CompareVersions compares two semver-like version strings.
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+// Handles formats like "1.2.3", "v1.2.3", "openclaw 1.2.3".
+func CompareVersions(a, b string) int {
+	pa := parseVersion(a)
+	pb := parseVersion(b)
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			return pa[i] - pb[i]
+		}
+	}
+	return 0
+}
+
+// parseVersion extracts [major, minor, patch] from a version string.
+func parseVersion(s string) [3]int {
+	// Strip common prefixes.
+	s = strings.TrimSpace(s)
+	for _, prefix := range []string{"openclaw ", "zeroclaw ", "v"} {
+		s = strings.TrimPrefix(s, prefix)
+	}
+	// Take only the first word (in case of trailing text).
+	if idx := strings.IndexByte(s, ' '); idx >= 0 {
+		s = s[:idx]
+	}
+	parts := strings.SplitN(s, ".", 4)
+	var v [3]int
+	for i := 0; i < 3 && i < len(parts); i++ {
+		n, _ := strconv.Atoi(parts[i])
+		v[i] = n
+	}
+	return v
 }

@@ -8,9 +8,10 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
+	gosync "sync"
 	"time"
 
+	meshsync "github.com/SallyKAN/claw-mesh/internal/sync"
 	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
@@ -22,7 +23,7 @@ type Agent struct {
 	coordinatorURL string
 	token          string
 	adminToken     string // original token for re-registration
-	mu             sync.Mutex
+	mu             gosync.Mutex
 	name           string
 	endpoint       string
 	capabilities   types.Capabilities
@@ -30,6 +31,8 @@ type Agent struct {
 	gatewayEndpoint string
 	gatewayToken    string
 	gatewayTimeout  int
+	openClawVersion string
+	runtimeKind     RuntimeKind
 
 	nodeID string
 	client *http.Client
@@ -37,8 +40,11 @@ type Agent struct {
 	listenAddr string
 	httpServer *http.Server
 
-	startOnce sync.Once
-	stopOnce  sync.Once
+	syncClient  *meshsync.SyncClient
+	syncWatcher *meshsync.Watcher
+
+	startOnce gosync.Once
+	stopOnce  gosync.Once
 	stopCh    chan struct{}
 	done      chan struct{}
 	started   bool
@@ -51,10 +57,12 @@ type AgentConfig struct {
 	Name            string
 	Endpoint        string
 	Tags            []string
-	ListenAddr      string // address for the local message handler (default: :9121)
-	GatewayEndpoint string // OpenClaw Gateway endpoint (default: auto-discover)
-	GatewayToken    string // OpenClaw Gateway auth token
-	GatewayTimeout  int    // Gateway request timeout in seconds (default: 120)
+	ListenAddr      string      // address for the local message handler (default: :9121)
+	GatewayEndpoint string      // OpenClaw Gateway endpoint (default: auto-discover)
+	GatewayToken    string      // OpenClaw Gateway auth token
+	GatewayTimeout  int         // Gateway request timeout in seconds (default: 120)
+	OpenClawVersion string      // OpenClaw version detected on this node
+	RuntimeKind     RuntimeKind // which runtime this node runs (openclaw, zeroclaw, none)
 }
 
 // NewAgent creates a node agent with the given configuration.
@@ -74,6 +82,8 @@ func NewAgent(cfg AgentConfig) *Agent {
 		gatewayEndpoint: cfg.GatewayEndpoint,
 		gatewayToken:    cfg.GatewayToken,
 		gatewayTimeout:  cfg.GatewayTimeout,
+		openClawVersion: cfg.OpenClawVersion,
+		runtimeKind:     cfg.RuntimeKind,
 		client:          &http.Client{Timeout: 10 * time.Second},
 		listenAddr:      listenAddr,
 		stopCh:          make(chan struct{}),
@@ -84,9 +94,10 @@ func NewAgent(cfg AgentConfig) *Agent {
 // Register sends a registration request to the coordinator.
 func (a *Agent) Register() error {
 	req := types.RegisterRequest{
-		Name:         a.name,
-		Endpoint:     a.endpoint,
-		Capabilities: a.capabilities,
+		Name:            a.name,
+		Endpoint:        a.endpoint,
+		Capabilities:    a.capabilities,
+		OpenClawVersion: a.openClawVersion,
 	}
 
 	body, err := json.Marshal(req)
@@ -129,6 +140,22 @@ func (a *Agent) Register() error {
 	}
 
 	log.Printf("registered as node %s", a.nodeID)
+
+	// Check if coordinator has a newer OpenClaw version and auto-upgrade.
+	// Only applies when this node runs OpenClaw (not ZeroClaw or embedded runtimes).
+	if a.runtimeKind == RuntimeOpenClaw && regResp.CoordinatorOpenClawVersion != "" && a.openClawVersion != "" {
+		if CompareVersions(regResp.CoordinatorOpenClawVersion, a.openClawVersion) > 0 {
+			log.Printf("OpenClaw version mismatch: local=%s, coordinator=%s — upgrading...",
+				a.openClawVersion, regResp.CoordinatorOpenClawVersion)
+			if err := UpgradeOpenClaw(regResp.CoordinatorOpenClawVersion); err != nil {
+				log.Printf("WARN: OpenClaw upgrade failed: %v", err)
+			} else {
+				log.Printf("OpenClaw upgraded to %s", regResp.CoordinatorOpenClawVersion)
+				a.openClawVersion = regResp.CoordinatorOpenClawVersion
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -262,6 +289,11 @@ func (a *Agent) Shutdown() {
 		close(a.stopCh)
 	})
 
+	// Stop sync watcher if running.
+	if a.syncWatcher != nil {
+		a.syncWatcher.Stop()
+	}
+
 	// Only wait for heartbeat loop if it was started.
 	if a.started {
 		<-a.done
@@ -277,6 +309,38 @@ func (a *Agent) Shutdown() {
 	// Deregister from coordinator.
 	if a.nodeID != "" {
 		a.deregister()
+	}
+}
+
+// StartSync initializes the sync client and watcher for continuous file sync.
+func (a *Agent) StartSync(workspaceDir string) {
+	a.syncClient = meshsync.NewSyncClient(a.coordinatorURL, a.token, a.nodeID, workspaceDir)
+	a.syncWatcher = meshsync.NewWatcher(workspaceDir, 30*time.Second, func() {
+		if err := a.syncClient.PushSync(); err != nil {
+			log.Printf("sync push failed: %v", err)
+		}
+	})
+	a.syncWatcher.Start()
+	go a.syncPullLoop()
+	log.Printf("sync: started (workspace=%s, interval=30s)", workspaceDir)
+}
+
+func (a *Agent) syncPullLoop() {
+	// Initial pull immediately.
+	if err := a.syncClient.PullSync(); err != nil {
+		log.Printf("sync: initial pull failed: %v", err)
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			if err := a.syncClient.PullSync(); err != nil {
+				log.Printf("sync pull failed: %v", err)
+			}
+		}
 	}
 }
 

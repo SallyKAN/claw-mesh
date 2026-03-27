@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,6 +48,8 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newNodesCmd())
 	rootCmd.AddCommand(newSendCmd())
 	rootCmd.AddCommand(newRouteCmd())
+	rootCmd.AddCommand(newSyncCmd())
+	rootCmd.AddCommand(newDoctorCmd())
 
 	return rootCmd
 }
@@ -130,7 +133,7 @@ func newUpCmd() *cobra.Command {
 			// Always allow private IPs so the local node can register as 127.0.0.1.
 			cfg.Coordinator.AllowPrivate = true
 
-			srv := coordinator.NewServer(&cfg.Coordinator)
+			srv := coordinator.NewServer(cfg)
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -182,13 +185,26 @@ func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
 	name, _ := os.Hostname()
 
 	// Discover local OpenClaw Gateway.
-	var gwEndpoint, gwToken string
+	var gwEndpoint, gwToken, gwVersion string
 	if info, err := node.DiscoverGateway(); err == nil {
 		gwEndpoint = info.Endpoint
 		gwToken = info.Token
+		gwVersion = info.Version
 		fmt.Fprintf(os.Stderr, "local node: discovered gateway at %s\n", gwEndpoint)
 	} else {
 		fmt.Fprintf(os.Stderr, "local node: no gateway found, running in echo mode\n")
+	}
+
+	// Detect runtime version if not discovered via gateway.
+	var runtimeKind node.RuntimeKind
+	if gwVersion == "" {
+		if rt := node.DetectRuntime(); rt != nil {
+			gwVersion = rt.Version
+			runtimeKind = rt.Kind
+		}
+	} else {
+		// Gateway was discovered, assume OpenClaw.
+		runtimeKind = node.RuntimeOpenClaw
 	}
 
 	// Resolve gateway token from env if not discovered.
@@ -203,6 +219,8 @@ func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
 		GatewayEndpoint: gwEndpoint,
 		GatewayToken:    gwToken,
 		GatewayTimeout:  120,
+		OpenClawVersion: gwVersion,
+		RuntimeKind:     runtimeKind,
 	})
 
 	if err := agent.StartHandler(); err != nil {
@@ -339,6 +357,14 @@ func newJoinCmd() *cobra.Command {
 				}
 			}
 
+			// Detect local OpenClaw version and runtime kind for the agent.
+			var openClawVersion string
+			var rtKind node.RuntimeKind
+			if rt := node.DetectRuntime(); rt != nil {
+				openClawVersion = rt.Version
+				rtKind = rt.Kind
+			}
+
 			agent := node.NewAgent(node.AgentConfig{
 				CoordinatorURL:  coordinatorURL,
 				Token:           token,
@@ -349,6 +375,8 @@ func newJoinCmd() *cobra.Command {
 				GatewayEndpoint: resolveGatewayEndpoint(cmd, cfg),
 				GatewayToken:    resolveGatewayTokenFlag(cmd, cfg),
 				GatewayTimeout:  resolveGatewayTimeout(cmd, cfg),
+				OpenClawVersion: openClawVersion,
+				RuntimeKind:     rtKind,
 			})
 
 			if err := agent.StartHandler(); err != nil {
@@ -359,6 +387,16 @@ func newJoinCmd() *cobra.Command {
 				return err
 			}
 			agent.StartHeartbeat()
+
+			// Start file sync if workspace is available.
+			noSync, _ := cmd.Flags().GetBool("no-sync-config")
+			if !noSync {
+				home, _ := os.UserHomeDir()
+				wsDir := filepath.Join(home, "clawd")
+				if info, err := os.Stat(wsDir); err == nil && info.IsDir() {
+					agent.StartSync(wsDir)
+				}
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -825,6 +863,229 @@ func buildRuleFromMatch(matchStr, target string) types.RoutingRule {
 		}
 	}
 	return rule
+}
+
+func newSyncCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Manage file sync across nodes",
+	}
+	cmd.AddCommand(newSyncStatusCmd())
+	cmd.AddCommand(newSyncTriggerCmd())
+	return cmd
+}
+
+func newSyncStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show sync status for all nodes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			base, token := coordFlags(cmd)
+			req, err := http.NewRequest(http.MethodGet, base+"/api/v1/sync/status", nil)
+			if err != nil {
+				return err
+			}
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil {
+				return fmt.Errorf("connecting to coordinator: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("coordinator returned %d", resp.StatusCode)
+			}
+			var statuses []struct {
+				NodeID          string    `json:"node_id"`
+				LastSyncAt      time.Time `json:"last_sync_at"`
+				ManifestVersion int64     `json:"manifest_version"`
+				FileCount       int       `json:"file_count"`
+				HasConflict     bool      `json:"has_conflict"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&statuses); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			if len(statuses) == 0 {
+				fmt.Println("No sync activity recorded.")
+				return nil
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "NODE\tVERSION\tFILES\tCONFLICT\tLAST SYNC")
+			for _, s := range statuses {
+				conflict := "no"
+				if s.HasConflict {
+					conflict = "YES"
+				}
+				ago := time.Since(s.LastSyncAt).Truncate(time.Second)
+				fmt.Fprintf(w, "%s\tv%d\t%d\t%s\t%s ago\n",
+					s.NodeID, s.ManifestVersion, s.FileCount, conflict, ago)
+			}
+			w.Flush()
+			return nil
+		},
+	}
+}
+
+func newSyncTriggerCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "trigger",
+		Short: "Manually trigger a sync push from local workspace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			base, token := coordFlags(cmd)
+			home, _ := os.UserHomeDir()
+			wsDir := filepath.Join(home, "clawd")
+
+			if _, err := os.Stat(wsDir); err != nil {
+				return fmt.Errorf("workspace not found: %s", wsDir)
+			}
+
+			hostname, _ := os.Hostname()
+			nodeID := "cli-" + hostname
+
+			fmt.Fprintf(os.Stderr, "scanning %s...\n", wsDir)
+
+			var files []map[string]string
+			syncFiles := []string{"SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "MEMORY.md"}
+			for _, name := range syncFiles {
+				p := filepath.Join(wsDir, name)
+				data, err := os.ReadFile(p)
+				if err != nil {
+					continue
+				}
+				files = append(files, map[string]string{
+					"path":    name,
+					"content": string(data),
+					"sha256":  fmt.Sprintf("%x", sha256.Sum256(data)),
+				})
+			}
+
+			if len(files) == 0 {
+				fmt.Println("No syncable files found.")
+				return nil
+			}
+
+			payload, _ := json.Marshal(map[string]any{
+				"node_id": nodeID,
+				"files":   files,
+			})
+
+			req, err := http.NewRequest(http.MethodPost, base+"/api/v1/sync/push", bytes.NewReader(payload))
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+
+			client := &http.Client{Timeout: 30 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil {
+				return fmt.Errorf("push failed: %w", err)
+			}
+			defer resp.Body.Close()
+
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			}
+
+			var pushResp struct {
+				Accepted  []string `json:"accepted"`
+				Conflicts []struct {
+					Path string `json:"path"`
+				} `json:"conflicts"`
+				Version int64 `json:"version"`
+			}
+			json.Unmarshal(body, &pushResp)
+			fmt.Printf("Pushed %d files (manifest v%d)\n", len(pushResp.Accepted), pushResp.Version)
+			if len(pushResp.Conflicts) > 0 {
+				fmt.Printf("Conflicts: %d\n", len(pushResp.Conflicts))
+			}
+			return nil
+		},
+	}
+}
+
+func newDoctorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Check mesh health and connectivity",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			base, token := coordFlags(cmd)
+			allOk := true
+
+			// Check coordinator reachability.
+			fmt.Print("Coordinator reachable... ")
+			req, _ := http.NewRequest(http.MethodGet, base+"/api/v1/nodes", nil)
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil {
+				fmt.Printf("FAIL (%v)\n", err)
+				allOk = false
+			} else {
+				resp.Body.Close()
+				fmt.Println("OK")
+			}
+
+			// Check OpenClaw Gateway.
+			fmt.Print("OpenClaw Gateway... ")
+			if info, err := node.DiscoverGateway(); err == nil {
+				fmt.Printf("OK (%s)\n", info.Endpoint)
+			} else {
+				fmt.Println("not found")
+				allOk = false
+			}
+
+			// Check workspace directory.
+			fmt.Print("Workspace directory... ")
+			home, _ := os.UserHomeDir()
+			wsDir := filepath.Join(home, "clawd")
+			if info, err := os.Stat(wsDir); err == nil && info.IsDir() {
+				fmt.Printf("OK (%s)\n", wsDir)
+			} else {
+				wsDir2 := filepath.Join(home, "openclaw")
+				if info, err := os.Stat(wsDir2); err == nil && info.IsDir() {
+					fmt.Printf("OK (%s)\n", wsDir2)
+				} else {
+					fmt.Println("not found")
+					allOk = false
+				}
+			}
+
+			// Check sync endpoint.
+			fmt.Print("Sync endpoint... ")
+			syncReq, _ := http.NewRequest(http.MethodGet, base+"/api/v1/sync/status", nil)
+			if token != "" {
+				syncReq.Header.Set("Authorization", "Bearer "+token)
+			}
+			syncResp, err := client.Do(syncReq)
+			if err != nil {
+				fmt.Printf("FAIL (%v)\n", err)
+				allOk = false
+			} else {
+				syncResp.Body.Close()
+				if syncResp.StatusCode == http.StatusOK {
+					fmt.Println("OK")
+				} else {
+					fmt.Printf("FAIL (HTTP %d)\n", syncResp.StatusCode)
+					allOk = false
+				}
+			}
+
+			if allOk {
+				fmt.Println("\nAll checks passed.")
+			} else {
+				fmt.Println("\nSome checks failed.")
+			}
+			return nil
+		},
+	}
 }
 
 func main() {

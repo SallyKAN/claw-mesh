@@ -18,6 +18,13 @@ var excludedConfigKeys = map[string]bool{
 	"channels": true,
 	"gateway":  true,
 	"bindings": true,
+	"env":      true, // proxy/env vars are node-local
+}
+
+// excludedAgentDefaultsKeys are sub-keys of agents.defaults that are
+// node-local and should NOT be distributed via seed config.
+var excludedAgentDefaultsKeys = map[string]bool{
+	"workspace": true, // filesystem path is node-local
 }
 
 // seedWorkspaceFiles are the files from the workspace that should be
@@ -74,6 +81,17 @@ func (s *Server) handleSeedConfig(w http.ResponseWriter, r *http.Request) {
 	// Remove excluded keys.
 	for k := range excludedConfigKeys {
 		delete(raw, k)
+	}
+
+	// Selectively filter the "agents" key: keep defaults (minus workspace)
+	// but strip the list (which contains node-local workspace paths).
+	if agentsRaw, ok := raw["agents"]; ok {
+		filtered := filterAgentsForSeed(agentsRaw)
+		if filtered == nil {
+			delete(raw, "agents")
+		} else {
+			raw["agents"] = filtered
+		}
 	}
 
 	log.Printf("seed/config: serving filtered config (%d keys) from %s", len(raw), cfgPath)
@@ -172,6 +190,41 @@ func (s *Server) resolveWorkspaceDir() string {
 		}
 	}
 	return ""
+}
+
+// filterAgentsForSeed takes the raw "agents" JSON value and returns a
+// filtered version that only includes agents.defaults (minus node-local
+// sub-keys like workspace). agents.list is stripped entirely because it
+// contains node-specific workspace paths and agent bindings.
+func filterAgentsForSeed(raw json.RawMessage) json.RawMessage {
+	var agents map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &agents); err != nil {
+		return raw // can't parse, return as-is
+	}
+
+	// Only keep "defaults", strip "list" and other node-local sub-keys.
+	filtered := make(map[string]json.RawMessage)
+
+	if defaults, ok := agents["defaults"]; ok {
+		// Further filter defaults to remove node-local keys (e.g. workspace).
+		var defs map[string]json.RawMessage
+		if err := json.Unmarshal(defaults, &defs); err == nil {
+			for k := range excludedAgentDefaultsKeys {
+				delete(defs, k)
+			}
+			if len(defs) > 0 {
+				b, _ := json.Marshal(defs)
+				filtered["defaults"] = b
+			}
+		}
+	}
+
+	if len(filtered) == 0 {
+		// Nothing useful to sync — remove agents key entirely.
+		return nil
+	}
+	b, _ := json.Marshal(filtered)
+	return b
 }
 
 // expandHome replaces a leading ~ with the user's home directory.

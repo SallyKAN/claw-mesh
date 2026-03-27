@@ -19,6 +19,16 @@ func TestHandleSeedConfig(t *testing.T) {
 		"auth":     map[string]any{"profiles": []string{"default"}},
 		"models":   map[string]any{"providers": []string{"anthropic"}},
 		"env":      map[string]any{"ANTHROPIC_API_KEY": "sk-test"},
+		"agents": map[string]any{
+			"defaults": map[string]any{
+				"workspace":     "/Users/test/clawd",
+				"maxConcurrent": 4,
+				"heartbeat":     map[string]any{"every": "30m"},
+			},
+			"list": []any{
+				map[string]any{"id": "main", "workspace": "/Users/test/clawd"},
+			},
+		},
 		"channels": map[string]any{"telegram": map[string]any{"token": "tg-123"}},
 		"gateway":  map[string]any{"port": 18789},
 		"meta":     map[string]any{"lastTouchedAt": "2026-03-01"},
@@ -44,17 +54,41 @@ func TestHandleSeedConfig(t *testing.T) {
 	}
 
 	// Should include shared keys.
-	for _, key := range []string{"auth", "models", "env"} {
+	for _, key := range []string{"auth", "models", "agents"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("expected key %q in seed config", key)
 		}
 	}
 
 	// Should exclude local keys.
-	for _, key := range []string{"channels", "gateway", "meta", "wizard", "bindings"} {
+	for _, key := range []string{"channels", "gateway", "meta", "wizard", "bindings", "env"} {
 		if _, ok := result[key]; ok {
 			t.Errorf("key %q should be excluded from seed config", key)
 		}
+	}
+
+	// Verify agents filtering: defaults should have maxConcurrent/heartbeat
+	// but NOT workspace; list should be stripped entirely.
+	var agents map[string]json.RawMessage
+	if err := json.Unmarshal(result["agents"], &agents); err != nil {
+		t.Fatalf("failed to parse agents: %v", err)
+	}
+	if _, ok := agents["list"]; ok {
+		t.Error("agents.list should be stripped from seed config")
+	}
+	if defaults, ok := agents["defaults"]; ok {
+		var defs map[string]json.RawMessage
+		if err := json.Unmarshal(defaults, &defs); err != nil {
+			t.Fatalf("failed to parse agents.defaults: %v", err)
+		}
+		if _, ok := defs["workspace"]; ok {
+			t.Error("agents.defaults.workspace should be stripped from seed config")
+		}
+		if _, ok := defs["maxConcurrent"]; !ok {
+			t.Error("agents.defaults.maxConcurrent should be in seed config")
+		}
+	} else {
+		t.Error("agents.defaults should be in seed config")
 	}
 }
 

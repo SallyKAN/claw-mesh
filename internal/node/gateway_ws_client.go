@@ -298,7 +298,13 @@ func (c *WSGatewayClient) SendMessage(ctx context.Context, msg *types.Message) (
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	// Apply timeout only if the parent context doesn't already have a deadline.
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+	} else {
+		cancel = func() {} // no-op; parent context controls lifetime
+	}
 	defer cancel()
 
 	idemKey := "msg-" + msg.ID

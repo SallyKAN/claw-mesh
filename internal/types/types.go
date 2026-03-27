@@ -23,12 +23,13 @@ type Capabilities struct {
 
 // Node represents a single machine running an OpenClaw Gateway.
 type Node struct {
-	ID            string       `json:"id" yaml:"id"`
-	Name          string       `json:"name" yaml:"name"`
-	Endpoint      string       `json:"endpoint" yaml:"endpoint"`
-	Capabilities  Capabilities `json:"capabilities" yaml:"capabilities"`
-	Status        NodeStatus   `json:"status" yaml:"status"`
-	LastHeartbeat time.Time    `json:"last_heartbeat" yaml:"last_heartbeat"`
+	ID              string       `json:"id" yaml:"id"`
+	Name            string       `json:"name" yaml:"name"`
+	Endpoint        string       `json:"endpoint" yaml:"endpoint"`
+	Capabilities    Capabilities `json:"capabilities" yaml:"capabilities"`
+	Status          NodeStatus   `json:"status" yaml:"status"`
+	LastHeartbeat   time.Time    `json:"last_heartbeat" yaml:"last_heartbeat"`
+	OpenClawVersion string       `json:"openclaw_version,omitempty" yaml:"openclaw_version,omitempty"`
 }
 
 // MatchCriteria defines what a routing rule matches against.
@@ -65,15 +66,17 @@ type MessageResponse struct {
 
 // RegisterRequest is sent by a node agent to register with the coordinator.
 type RegisterRequest struct {
-	Name         string       `json:"name"`
-	Endpoint     string       `json:"endpoint"`
-	Capabilities Capabilities `json:"capabilities"`
+	Name            string       `json:"name"`
+	Endpoint        string       `json:"endpoint"`
+	Capabilities    Capabilities `json:"capabilities"`
+	OpenClawVersion string       `json:"openclaw_version,omitempty"`
 }
 
 // RegisterResponse is returned after successful registration.
 type RegisterResponse struct {
-	NodeID string `json:"node_id"`
-	Token  string `json:"token,omitempty"`
+	NodeID                     string `json:"node_id"`
+	Token                      string `json:"token,omitempty"`
+	CoordinatorOpenClawVersion string `json:"coordinator_openclaw_version,omitempty"`
 }
 
 // HeartbeatRequest is sent periodically by node agents.
@@ -116,4 +119,114 @@ type Choice struct {
 	Index        int         `json:"index"`
 	Message      ChatMessage `json:"message"`
 	FinishReason string      `json:"finish_reason"`
+}
+
+// --- Sync types (v0.2) ---
+
+// SyncFileEntry is a single file record in a sync manifest.
+type SyncFileEntry struct {
+	Path    string    `json:"path"`
+	SHA256  string    `json:"sha256"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
+}
+
+// SyncManifest is the coordinator's authoritative file manifest.
+type SyncManifest struct {
+	Version   int64           `json:"version"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	Files     []SyncFileEntry `json:"files"`
+}
+
+// SyncPushRequest is sent by a node to upload changed files.
+type SyncPushRequest struct {
+	NodeID string         `json:"node_id"`
+	Files  []SyncPushFile `json:"files"`
+}
+
+// SyncPushFile is a single file in a push request.
+type SyncPushFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	SHA256  string `json:"sha256"`
+	Delete  bool   `json:"delete,omitempty"`
+}
+
+// SyncPushResponse is the result of a push operation.
+type SyncPushResponse struct {
+	Accepted  []string       `json:"accepted"`
+	Conflicts []SyncConflict `json:"conflicts,omitempty"`
+	Version   int64          `json:"version"`
+}
+
+// SyncConflict describes a file conflict during push.
+type SyncConflict struct {
+	Path       string `json:"path"`
+	NodeID     string `json:"node_id"`
+	Resolution string `json:"resolution"`
+}
+
+// SyncNodeStatus is a single node's sync state (for dashboard).
+type SyncNodeStatus struct {
+	NodeID          string    `json:"node_id"`
+	LastSyncAt      time.Time `json:"last_sync_at"`
+	ManifestVersion int64     `json:"manifest_version"`
+	FileCount       int       `json:"file_count"`
+	HasConflict     bool      `json:"has_conflict"`
+}
+
+// --- Async task types ---
+
+// TaskStatus represents the current state of an async task.
+type TaskStatus string
+
+const (
+	TaskStatusPending   TaskStatus = "pending"
+	TaskStatusRunning   TaskStatus = "running"
+	TaskStatusCompleted TaskStatus = "completed"
+	TaskStatusFailed    TaskStatus = "failed"
+)
+
+// Task tracks an async message forwarding operation.
+type Task struct {
+	ID              string     `json:"id"`
+	MessageID       string     `json:"message_id"`
+	NodeID          string     `json:"node_id"`
+	Status          TaskStatus `json:"status"`
+	Response        string     `json:"response,omitempty"`
+	PartialResponse string     `json:"partial_response,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// TaskResponse is the API response for async task operations.
+type TaskResponse struct {
+	TaskID string     `json:"task_id"`
+	NodeID string     `json:"node_id"`
+	Status TaskStatus `json:"status"`
+}
+
+// NodeAsyncAccepted is the response from a node accepting an async message.
+type NodeAsyncAccepted struct {
+	MessageID string `json:"message_id"`
+	Status    string `json:"status"`
+}
+
+// RoutingDecision records why a message was routed to a particular node.
+type RoutingDecision struct {
+	Timestamp   time.Time `json:"timestamp"`
+	MessageSnip string    `json:"message_snip"` // first 60 chars of message content
+	NodeName    string    `json:"node_name"`
+	Method      string    `json:"method"` // "explicit" | "llm" | "rule" | "least-busy"
+	Reason      string    `json:"reason,omitempty"`
+}
+
+// NodeMessageStatus is the response from a node's message status endpoint.
+type NodeMessageStatus struct {
+	MessageID       string `json:"message_id"`
+	Status          string `json:"status"` // accepted, processing, completed, failed
+	Response        string `json:"response,omitempty"`
+	PartialResponse string `json:"partial_response,omitempty"`
+	Error           string `json:"error,omitempty"`
 }

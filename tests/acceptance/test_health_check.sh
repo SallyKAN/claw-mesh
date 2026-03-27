@@ -42,7 +42,7 @@ _pass "binary built"
 # --- Start coordinator ---
 echo "--- Step 2: Start coordinator ---"
 "$BINARY" up --port "$COORD_PORT" --token "$TOKEN" --allow-private \
-  --data-dir "$TMPDIR_TEST/data" >"$COORD_LOG" 2>&1 &
+  --data-dir "$TMPDIR_TEST/data" --config "$TMPDIR_TEST/claw-mesh.yaml" >"$COORD_LOG" 2>&1 &
 COORD_PID=$!
 if ! wait_for_log "$COORD_LOG" "coordinator listening" 10; then
   _fail "coordinator did not start"

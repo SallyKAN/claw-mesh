@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -40,6 +41,12 @@ func (s *Server) handleRouteAuto(w http.ResponseWriter, r *http.Request) {
 	node, err := s.router.Route(msg)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Async mode: return task ID immediately, process in background.
+	if r.URL.Query().Get("async") == "true" {
+		s.startAsyncForward(w, node, msg)
 		return
 	}
 
@@ -100,6 +107,12 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Async mode: return task ID immediately, process in background.
+	if r.URL.Query().Get("async") == "true" {
+		s.startAsyncForward(w, node, msg)
+		return
+	}
+
 	log.Printf("forwarding message %s to node %s (%s)", msg.ID, node.ID, node.Name)
 	nodeToken := s.registry.GetNodeToken(node.ID)
 	fwdResp, err := s.forwarder.ForwardMessage(r.Context(), node, msg, nodeToken)
@@ -110,6 +123,12 @@ func (s *Server) handleRouteToNode(w http.ResponseWriter, r *http.Request) {
 	}
 	fwdResp.NodeID = node.ID
 	writeJSON(w, http.StatusOK, fwdResp)
+}
+
+// handleListDecisions handles GET /api/v1/routing/decisions.
+// Returns the most recent routing decisions (up to 200), newest last.
+func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.router.ListDecisions())
 }
 
 // handleListRules handles GET /api/v1/rules.
@@ -187,4 +206,65 @@ func validateRule(rule *types.RoutingRule) error {
 	}
 
 	return nil
+}
+
+// startAsyncForward creates a task and launches async forwarding in a goroutine.
+func (s *Server) startAsyncForward(w http.ResponseWriter, node *types.Node, msg *types.Message) {
+	taskID, err := generateID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate task ID"})
+		return
+	}
+
+	now := time.Now()
+	task := &types.Task{
+		ID:        taskID,
+		MessageID: msg.ID,
+		NodeID:    node.ID,
+		Status:    types.TaskStatusPending,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.taskStore.Create(task)
+
+	log.Printf("async task %s created for message %s → node %s (%s)", taskID, msg.ID, node.ID, node.Name)
+
+	go s.runAsyncForward(taskID, node, msg)
+
+	writeJSON(w, http.StatusAccepted, types.TaskResponse{
+		TaskID: taskID,
+		NodeID: node.ID,
+		Status: types.TaskStatusPending,
+	})
+}
+
+func (s *Server) runAsyncForward(taskID string, node *types.Node, msg *types.Message) {
+	s.taskStore.UpdateStatus(taskID, types.TaskStatusRunning, "", "")
+
+	nodeToken := s.registry.GetNodeToken(node.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	resp, err := s.forwarder.ForwardMessageAsync(ctx, node, msg, nodeToken, func(partial string) {
+		s.taskStore.UpdatePartial(taskID, partial)
+	})
+	if err != nil {
+		log.Printf("async forward failed for task %s: %v", taskID, err)
+		s.taskStore.UpdateStatus(taskID, types.TaskStatusFailed, "", err.Error())
+		return
+	}
+
+	s.taskStore.UpdateStatus(taskID, types.TaskStatusCompleted, resp.Response, "")
+	log.Printf("async task %s completed", taskID)
+}
+
+// handleGetTask handles GET /api/v1/tasks/{id}.
+func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	task := s.taskStore.Get(id)
+	if task == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
 }

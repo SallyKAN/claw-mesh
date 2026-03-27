@@ -7,11 +7,15 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/config"
+	meshsync "github.com/SallyKAN/claw-mesh/internal/sync"
 	"github.com/SallyKAN/claw-mesh/internal/types"
 )
 
@@ -19,16 +23,20 @@ const maxRequestBody = 1 << 20 // 1 MB
 
 // Server is the coordinator HTTP server.
 type Server struct {
-	cfg       *config.CoordinatorConfig
-	registry  *Registry
-	router    *Router
-	health    *HealthChecker
-	forwarder *Forwarder
-	http      *http.Server
+	cfg             *config.CoordinatorConfig
+	registry        *Registry
+	router          *Router
+	health          *HealthChecker
+	forwarder       *Forwarder
+	taskStore       *TaskStore
+	syncServer      *meshsync.SyncServer
+	http            *http.Server
+	openClawVersion string
 }
 
 // NewServer creates a coordinator server.
-func NewServer(cfg *config.CoordinatorConfig) *Server {
+func NewServer(fullCfg *config.Config) *Server {
+	cfg := &fullCfg.Coordinator
 	reg := NewRegistry()
 
 	// Set up persistent store for routing rules.
@@ -49,16 +57,20 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 		log.Printf("WARN: could not init rule store at %s: %v", storePath, err)
 	}
 
-	rt := NewRouter(reg, store)
+	classifier := newLLMClassifierFromOpenClaw(cfg.OpenClawConfig)
+	rt := NewRouter(reg, store, classifier)
 	hc := NewHealthChecker(reg, 30*time.Second, 10*time.Second)
 	fwd := NewForwarder()
+	ts := NewTaskStore()
 
 	s := &Server{
-		cfg:       cfg,
-		registry:  reg,
-		router:    rt,
-		health:    hc,
-		forwarder: fwd,
+		cfg:             cfg,
+		registry:        reg,
+		router:          rt,
+		health:          hc,
+		forwarder:       fwd,
+		taskStore:       ts,
+		openClawVersion: detectLocalOpenClawVersion(),
 	}
 
 	mux := http.NewServeMux()
@@ -74,10 +86,38 @@ func NewServer(cfg *config.CoordinatorConfig) *Server {
 	mux.HandleFunc("GET /api/v1/rules", s.handleListRules)
 	mux.HandleFunc("POST /api/v1/rules", s.requireAuth(s.handleAddRule))
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.requireAuth(s.handleDeleteRule))
+	mux.HandleFunc("GET /api/v1/routing/decisions", s.handleListDecisions)
+
+	// Tasks (async message tracking)
+	mux.HandleFunc("GET /api/v1/tasks/{id}", s.requireAuth(s.handleGetTask))
 
 	// Seed (config sync for new nodes)
 	mux.HandleFunc("GET /api/v1/seed/config", s.requireAuth(s.handleSeedConfig))
 	mux.HandleFunc("GET /api/v1/seed/workspace", s.requireAuth(s.handleSeedWorkspace))
+
+	// Sync (file sync across nodes)
+	syncStore, err := meshsync.NewManifestStore(
+		filepath.Join(dataDir, "sync-manifest.json"),
+		filepath.Join(dataDir, "sync-data"),
+	)
+	if err != nil {
+		log.Printf("WARN: could not init sync store: %v", err)
+	} else {
+		// Seed manifest from workspace if available.
+		if wsDir := s.resolveWorkspaceDir(); wsDir != "" {
+			if serr := syncStore.SeedFromWorkspace(wsDir); serr != nil {
+				log.Printf("WARN: sync seed from workspace failed: %v", serr)
+			} else {
+				log.Printf("sync: seeded manifest from %s", wsDir)
+			}
+		}
+		syncSrv := meshsync.NewSyncServer(syncStore)
+		s.syncServer = syncSrv
+		mux.HandleFunc("GET /api/v1/sync/manifest", s.requireAuth(syncSrv.HandleGetManifest))
+		mux.HandleFunc("GET /api/v1/sync/file", s.requireAuth(syncSrv.HandleGetFile))
+		mux.HandleFunc("POST /api/v1/sync/push", s.requireAuth(syncSrv.HandlePush))
+		mux.HandleFunc("GET /api/v1/sync/status", syncSrv.HandleStatus)
+	}
 
 	// Dashboard
 	mux.Handle("/", DashboardHandler(cfg.Token))
@@ -108,6 +148,7 @@ func (s *Server) Start() error {
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.health.Stop()
+	s.taskStore.Stop()
 	return s.http.Shutdown(ctx)
 }
 
@@ -180,12 +221,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	node := &types.Node{
-		ID:            id,
-		Name:          req.Name,
-		Endpoint:      req.Endpoint,
-		Capabilities:  req.Capabilities,
-		Status:        types.NodeStatusOnline,
-		LastHeartbeat: time.Now(),
+		ID:              id,
+		Name:            req.Name,
+		Endpoint:        req.Endpoint,
+		Capabilities:    req.Capabilities,
+		Status:          types.NodeStatusOnline,
+		LastHeartbeat:   time.Now(),
+		OpenClawVersion: req.OpenClawVersion,
 	}
 
 	if err := s.registry.Add(node); err != nil {
@@ -196,8 +238,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("node registered: %s (%s) at %s", node.ID, node.Name, node.Endpoint)
 	writeJSON(w, http.StatusCreated, types.RegisterResponse{
-		NodeID: node.ID,
-		Token:  nodeToken,
+		NodeID:                     node.ID,
+		Token:                      nodeToken,
+		CoordinatorOpenClawVersion: s.openClawVersion,
 	})
 }
 
@@ -273,23 +316,32 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// validateEndpoint checks that an endpoint is a valid host:port and rejects
-// URLs with schemes/paths. Unless allowPrivate is true, loopback and private
+// validateEndpoint checks that an endpoint is a valid host:port or a full URL
+// (http:// or https://). Unless allowPrivate is true, loopback and private
 // IPs are rejected to prevent SSRF.
 func validateEndpoint(endpoint string, allowPrivate bool) error {
-	host, port, err := net.SplitHostPort(endpoint)
-	if err != nil {
-		return fmt.Errorf("endpoint must be host:port format: %v", err)
-	}
-	if host == "" || port == "" {
-		return fmt.Errorf("endpoint must have both host and port")
-	}
+	var host string
 
-	// Reject anything that looks like a URL (contains / or scheme).
-	for _, ch := range endpoint {
-		if ch == '/' {
-			return fmt.Errorf("endpoint must be host:port, not a URL")
+	// Accept full URLs (e.g. https://tunnel.trycloudflare.com)
+	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return fmt.Errorf("invalid endpoint URL: %v", err)
 		}
+		if u.Host == "" {
+			return fmt.Errorf("endpoint URL must have a host")
+		}
+		host = u.Hostname()
+	} else {
+		// Traditional host:port format
+		h, port, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return fmt.Errorf("endpoint must be host:port or a URL: %v", err)
+		}
+		if h == "" || port == "" {
+			return fmt.Errorf("endpoint must have both host and port")
+		}
+		host = h
 	}
 
 	if allowPrivate {
@@ -351,4 +403,13 @@ func bytesInRange(ip, start, end net.IP) bool {
 		}
 	}
 	return true
+}
+
+// detectLocalOpenClawVersion returns the OpenClaw version installed on this machine.
+func detectLocalOpenClawVersion() string {
+	out, err := exec.Command("openclaw", "--version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
