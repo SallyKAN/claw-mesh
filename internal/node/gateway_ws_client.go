@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -30,9 +31,10 @@ type wsResponse struct {
 
 // agentRun tracks an in-flight agent run, collecting streamed text.
 type agentRun struct {
-	text string
-	done chan struct{}
-	err  string
+	text   string
+	done   chan struct{}
+	err    string
+	deltas chan string // non-nil when streaming; receives incremental text deltas
 }
 
 // WSGatewayClient talks to an OpenClaw Gateway via WebSocket RPC.
@@ -101,6 +103,10 @@ func (c *WSGatewayClient) readLoop() {
 			c.pending = make(map[string]*wsPending)
 			for _, r := range c.runs {
 				r.err = "connection closed"
+				if r.deltas != nil {
+					close(r.deltas)
+					r.deltas = nil
+				}
 				select {
 				case <-r.done:
 				default:
@@ -200,11 +206,28 @@ func (c *WSGatewayClient) handleAgentEvent(payload json.RawMessage) {
 		// ev.Data.Text is the accumulated text so far.
 		if ev.Data.Text != "" {
 			c.mu.Lock()
+			prev := run.text
 			run.text = ev.Data.Text
+			deltaCh := run.deltas
 			c.mu.Unlock()
+
+			// Compute the incremental delta and send to streaming channel.
+			if deltaCh != nil && len(ev.Data.Text) > len(prev) {
+				delta := ev.Data.Text[len(prev):]
+				select {
+				case deltaCh <- delta:
+				default:
+				}
+			}
 		}
 	case "lifecycle":
 		if ev.Data.Phase == "end" {
+			c.mu.Lock()
+			deltaCh := run.deltas
+			c.mu.Unlock()
+			if deltaCh != nil {
+				close(deltaCh)
+			}
 			select {
 			case <-run.done:
 			default:
@@ -366,6 +389,102 @@ func (c *WSGatewayClient) SendMessage(ctx context.Context, msg *types.Message) (
 		MessageID: msg.ID,
 		Response:  response,
 	}, nil
+}
+
+// StreamMessage sends a message to the gateway and streams incremental deltas
+// as SSE events to w in real-time.
+func (c *WSGatewayClient) StreamMessage(ctx context.Context, msg *types.Message, w http.ResponseWriter) error {
+	if c.conn == nil {
+		if err := c.Connect(ctx); err != nil {
+			return fmt.Errorf("gateway connect: %w", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	idemKey := "msg-" + msg.ID
+
+	// Create the run with a deltas channel for real-time streaming.
+	run := &agentRun{
+		done:   make(chan struct{}),
+		deltas: make(chan string, 64),
+	}
+
+	params := map[string]interface{}{
+		"message":        msg.Content,
+		"idempotencyKey": idemKey,
+		"agentId":        "main",
+		"sessionKey":     "agent:main:claw-mesh:dashboard:" + msg.Source,
+	}
+
+	payload, err := c.call(ctx, "agent", params)
+	if err != nil {
+		return err
+	}
+
+	var accepted struct {
+		RunID  string `json:"runId"`
+		Status string `json:"status"`
+	}
+	json.Unmarshal(payload, &accepted)
+	if accepted.RunID == "" {
+		return fmt.Errorf("gateway agent: no runId in response")
+	}
+
+	// Register the run so handleAgentEvent can populate it.
+	c.mu.Lock()
+	c.runs[accepted.RunID] = run
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		delete(c.runs, accepted.RunID)
+		c.mu.Unlock()
+	}()
+
+	flusher, _ := w.(http.Flusher)
+
+	// Stream deltas as they arrive from the gateway.
+	for {
+		select {
+		case delta, ok := <-run.deltas:
+			if !ok {
+				// Channel closed — lifecycle end. Send [DONE].
+				fmt.Fprintf(w, "data: [DONE]\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return nil
+			}
+			sc := types.StreamChunk{Type: "delta", Delta: delta}
+			b, _ := json.Marshal(sc)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-run.done:
+			// Drain any remaining deltas.
+			for delta := range run.deltas {
+				sc := types.StreamChunk{Type: "delta", Delta: delta}
+				b, _ := json.Marshal(sc)
+				fmt.Fprintf(w, "data: %s\n\n", b)
+			}
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			c.mu.Lock()
+			runErr := run.err
+			c.mu.Unlock()
+			if runErr != "" {
+				return fmt.Errorf("agent run error: %s", runErr)
+			}
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // HealthCheck verifies the gateway is reachable via TCP.

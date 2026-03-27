@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/SallyKAN/claw-mesh/internal/types"
@@ -18,6 +20,9 @@ import (
 type GatewayClient interface {
 	// SendMessage forwards a claw-mesh message to the gateway and returns the response.
 	SendMessage(ctx context.Context, msg *types.Message) (*types.MessageResponse, error)
+	// StreamMessage forwards a message to the gateway and writes the streaming response
+	// as SSE events to w. The caller must set SSE response headers before calling this.
+	StreamMessage(ctx context.Context, msg *types.Message, w http.ResponseWriter) error
 	// HealthCheck returns true if the gateway is reachable and responsive.
 	HealthCheck(ctx context.Context) bool
 	// Close releases any resources held by the client.
@@ -100,6 +105,78 @@ func (c *HTTPGatewayClient) SendMessage(ctx context.Context, msg *types.Message)
 		MessageID: msg.ID,
 		Response:  content,
 	}, nil
+}
+
+// StreamMessage sends a streaming chat completion request to the gateway and writes
+// SSE events (data: {"type":"delta","delta":"..."}\n\n) to w.
+// The caller must set SSE response headers before calling this.
+func (c *HTTPGatewayClient) StreamMessage(ctx context.Context, msg *types.Message, w http.ResponseWriter) error {
+	reqBody := types.ChatCompletionRequest{
+		Model:    "default",
+		Messages: []types.ChatMessage{{Role: "user", Content: msg.Content}},
+		Stream:   true,
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshaling stream request: %w", err)
+	}
+
+	url := "http://" + c.endpoint + "/v1/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("creating gateway stream request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if c.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("gateway stream request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("gateway returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	flusher, _ := w.(http.Flusher)
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return nil
+		}
+		var chunk types.ChatCompletionStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta.Content
+		if delta == "" {
+			continue
+		}
+		sc := types.StreamChunk{Type: "delta", Delta: delta}
+		b, _ := json.Marshal(sc)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	return scanner.Err()
 }
 
 // HealthCheck verifies the gateway is reachable via TCP.

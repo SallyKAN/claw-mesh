@@ -230,3 +230,33 @@ type NodeMessageStatus struct {
 	PartialResponse string `json:"partial_response,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
+
+// --- Streaming types ---
+
+// StreamChunk is an SSE event flowing from node to coordinator and coordinator to dashboard.
+// Type is one of: "meta" | "delta" | "error".
+type StreamChunk struct {
+	Type      string `json:"type"`
+	Delta     string `json:"delta,omitempty"`      // text token (type=delta)
+	NodeID    string `json:"node_id,omitempty"`    // coordinator node ID (type=meta)
+	MessageID string `json:"message_id,omitempty"` // message ID (type=meta)
+	Error     string `json:"error,omitempty"`      // error message (type=error)
+}
+
+// ChatCompletionStreamChunk is an OpenAI-compatible streaming response chunk.
+type ChatCompletionStreamChunk struct {
+	ID      string                       `json:"id"`
+	Choices []ChatCompletionStreamChoice `json:"choices"`
+}
+
+// ChatCompletionStreamChoice is a single choice in a streaming chunk.
+type ChatCompletionStreamChoice struct {
+	Delta        ChatCompletionStreamDelta `json:"delta"`
+	FinishReason *string                   `json:"finish_reason"`
+}
+
+// ChatCompletionStreamDelta holds the incremental content of a streaming chunk.
+type ChatCompletionStreamDelta struct {
+	Content string `json:"content"`
+	Role    string `json:"role,omitempty"`
+}

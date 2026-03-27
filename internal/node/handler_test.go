@@ -31,6 +31,18 @@ func (m *mockGatewayClient) SendMessage(_ context.Context, msg *types.Message) (
 
 func (m *mockGatewayClient) HealthCheck(_ context.Context) bool { return m.healthy }
 func (m *mockGatewayClient) Close() error                      { return nil }
+func (m *mockGatewayClient) StreamMessage(_ context.Context, msg *types.Message, w http.ResponseWriter) error {
+	if m.err != nil {
+		return m.err
+	}
+	resp := *m.response
+	resp.MessageID = msg.ID
+	sc := types.StreamChunk{Type: "delta", Delta: resp.Response}
+	b, _ := json.Marshal(sc)
+	fmt.Fprintf(w, "data: %s\n\n", b)
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	return nil
+}
 
 func postMessage(handler http.Handler, msg types.Message) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(msg)

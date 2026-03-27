@@ -47,6 +47,7 @@ func NewHandler(token *string, gw GatewayClient) *Handler {
 	h.mux.HandleFunc("POST /api/v1/messages", h.requireAuth(h.handleMessage))
 	h.mux.HandleFunc("POST /api/v1/messages/async", h.requireAuth(h.handleMessageAsync))
 	h.mux.HandleFunc("GET /api/v1/messages/{id}/status", h.requireAuth(h.handleMessageStatus))
+	h.mux.HandleFunc("POST /api/v1/messages/stream", h.requireAuth(h.handleStreamMessage))
 	h.mux.HandleFunc("GET /healthz", h.handleHealthz)
 	return h
 }
@@ -217,6 +218,53 @@ func (h *Handler) handleMessageStatus(w http.ResponseWriter, r *http.Request) {
 	nt.mu.RUnlock()
 
 	writeNodeJSON(w, http.StatusOK, resp)
+}
+
+// handleStreamMessage handles POST /api/v1/messages/stream, streaming the gateway
+// response back as SSE events.
+func (h *Handler) handleStreamMessage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxNodeRequestBody)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	var msg types.Message
+	if err := dec.Decode(&msg); err != nil {
+		writeNodeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid message body: %v", err)})
+		return
+	}
+	if msg.ID == "" || msg.Content == "" {
+		writeNodeJSON(w, http.StatusBadRequest, map[string]string{"error": "id and content are required"})
+		return
+	}
+
+	log.Printf("streaming message %s: %s", msg.ID, msg.Content)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	if h.gatewayClient == nil {
+		log.Printf("WARN: no gateway client configured, echoing stream for message %s", msg.ID)
+		sc := types.StreamChunk{Type: "delta", Delta: "[claw-mesh] Gateway not available. Message: " + msg.Content}
+		b, _ := json.Marshal(sc)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		return
+	}
+
+	if err := h.gatewayClient.StreamMessage(r.Context(), &msg, w); err != nil {
+		log.Printf("gateway stream failed for message %s: %v", msg.ID, err)
+		sc := types.StreamChunk{Type: "error", Error: err.Error()}
+		b, _ := json.Marshal(sc)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
 }
 
 // handleHealthz responds to active health probes from the coordinator.

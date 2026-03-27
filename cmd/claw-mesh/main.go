@@ -170,6 +170,7 @@ func newUpCmd() *cobra.Command {
 	cmd.Flags().Bool("allow-private", false, "allow private/loopback IPs for node endpoints")
 	cmd.Flags().String("data-dir", "", "data directory for persistent state (default: ~/.claw-mesh)")
 	cmd.Flags().Bool("no-local", false, "do not auto-register the local machine as a node")
+	cmd.Flags().String("node-listen", ":9121", "local node handler listen address")
 	return cmd
 }
 
@@ -183,6 +184,14 @@ func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
 	token := cfg.Coordinator.Token
 
 	name, _ := os.Hostname()
+
+	// Allow overriding the node handler listen address.
+	nodeListen := ":9121"
+	if cmd != nil {
+		if v, err := cmd.Flags().GetString("node-listen"); err == nil && v != "" {
+			nodeListen = v
+		}
+	}
 
 	// Discover local OpenClaw Gateway.
 	var gwEndpoint, gwToken, gwVersion string
@@ -210,12 +219,19 @@ func startLocalNode(cfg *config.Config, cmd *cobra.Command) *node.Agent {
 	// Resolve gateway token from env if not discovered.
 	gwToken = node.ResolveGatewayToken("", gwToken)
 
+	// Derive endpoint from nodeListen (strip leading colon, use 127.0.0.1).
+	nodePort := nodeListen
+	if len(nodePort) > 0 && nodePort[0] == ':' {
+		nodePort = nodePort[1:]
+	}
+	nodeEndpoint := "127.0.0.1:" + nodePort
+
 	agent := node.NewAgent(node.AgentConfig{
 		CoordinatorURL:  coordinatorURL,
 		Token:           token,
 		Name:            name,
-		Endpoint:        "127.0.0.1:9121",
-		ListenAddr:      ":9121",
+		Endpoint:        nodeEndpoint,
+		ListenAddr:      nodeListen,
 		GatewayEndpoint: gwEndpoint,
 		GatewayToken:    gwToken,
 		GatewayTimeout:  120,

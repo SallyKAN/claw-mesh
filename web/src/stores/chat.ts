@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import type { ChatMessage } from '@/lib/types'
-import { meshApi } from '@/lib/api'
 import { useNodesStore } from './nodes'
 
 interface ChatState {
@@ -10,6 +9,10 @@ interface ChatState {
   send: (content: string) => Promise<void>
   setRouteTarget: (target: string | 'auto') => void
   clear: () => void
+}
+
+function getToken(): string {
+  return (typeof window !== 'undefined' && window.__TOKEN__) || ''
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -26,68 +29,99 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set((state) => ({ messages: [...state.messages, userMsg], sending: true }))
 
+    const placeholderId = crypto.randomUUID()
+    const placeholder: ChatMessage = {
+      id: placeholderId,
+      content: '',
+      source: 'node',
+      timestamp: new Date().toISOString(),
+    }
+    set((state) => ({ messages: [...state.messages, placeholder] }))
+
     try {
       const { routeTarget } = get()
-      const res = routeTarget === 'auto'
-        ? await meshApi.route.auto(content, true)
-        : await meshApi.route.toNode(routeTarget, content, true)
+      const url = routeTarget === 'auto'
+        ? '/api/v1/stream'
+        : `/api/v1/stream/${routeTarget}`
 
-      const placeholderId = crypto.randomUUID()
-      const nodeName = useNodesStore.getState().nodes.find((n) => n.id === res.node_id)?.name
+      const token = getToken()
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ content, source: 'dashboard' }),
+      })
 
-      // Add placeholder message.
-      const placeholder: ChatMessage = {
-        id: placeholderId,
-        content: '',
-        source: 'node',
-        node_id: res.node_id,
-        node_name: nodeName,
-        timestamp: new Date().toISOString(),
+      if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText)
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === placeholderId ? { ...m, content: `[Error] ${text}` } : m
+          ),
+        }))
+        return
       }
-      set((state) => ({ messages: [...state.messages, placeholder] }))
 
-      // Poll for task completion.
-      const taskId = res.task_id
-      const poll = async () => {
-        const interval = 1500
-        while (true) {
-          await new Promise((r) => setTimeout(r, interval))
+      const reader = res.body?.getReader()
+      if (!reader) return
+
+      const decoder = new TextDecoder()
+      let accumulated = ''
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (data === '[DONE]') continue
+
           try {
-            const task = await meshApi.tasks.get(taskId)
+            const chunk = JSON.parse(data)
 
-            if (task.partial_response) {
-              set((state) => ({
-                messages: state.messages.map((m) =>
-                  m.id === placeholderId ? { ...m, content: task.partial_response! } : m
-                ),
-              }))
-            }
-
-            if (task.status === 'completed') {
-              set((state) => ({
-                messages: state.messages.map((m) =>
-                  m.id === placeholderId ? { ...m, content: task.response ?? '' } : m
-                ),
-              }))
-              return
-            }
-
-            if (task.status === 'failed') {
+            if (chunk.type === 'meta') {
+              const nodeName = useNodesStore.getState().nodes.find((n) => n.id === chunk.node_id)?.name
               set((state) => ({
                 messages: state.messages.map((m) =>
                   m.id === placeholderId
-                    ? { ...m, content: `[Error] ${task.error ?? 'Task failed'}` }
+                    ? { ...m, node_id: chunk.node_id, node_name: nodeName }
                     : m
                 ),
               }))
-              return
+            }
+
+            if (chunk.type === 'delta' && chunk.delta) {
+              accumulated += chunk.delta
+              const text = accumulated
+              set((state) => ({
+                messages: state.messages.map((m) =>
+                  m.id === placeholderId ? { ...m, content: text } : m
+                ),
+              }))
+            }
+
+            if (chunk.type === 'error') {
+              set((state) => ({
+                messages: state.messages.map((m) =>
+                  m.id === placeholderId
+                    ? { ...m, content: `[Error] ${chunk.error}` }
+                    : m
+                ),
+              }))
             }
           } catch {
-            // Transient poll error — keep trying.
+            // Skip malformed JSON
           }
         }
       }
-      await poll()
     } finally {
       set({ sending: false })
     }

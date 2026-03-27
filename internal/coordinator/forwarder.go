@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -93,6 +94,65 @@ func (f *Forwarder) doForward(ctx context.Context, node *types.Node, msg *types.
 		return nil, fmt.Errorf("decoding response from node %s: %w", node.ID, err)
 	}
 	return &msgResp, nil
+}
+
+// ForwardMessageStream forwards a message to the node's streaming endpoint and proxies
+// the SSE response to w. It first emits a "meta" event with nodeID and message ID,
+// then transparently proxies all SSE lines from the node.
+func (f *Forwarder) ForwardMessageStream(ctx context.Context, node *types.Node, msg *types.Message, token, nodeID string, w http.ResponseWriter) error {
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshaling message: %w", err)
+	}
+
+	url := fmt.Sprintf("http://%s/api/v1/messages/stream", node.Endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("creating stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("stream request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("node returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	flusher, canFlush := w.(http.Flusher)
+
+	// Emit meta event so the dashboard knows which node responded.
+	meta := types.StreamChunk{Type: "meta", NodeID: nodeID, MessageID: msg.ID}
+	b, _ := json.Marshal(meta)
+	fmt.Fprintf(w, "data: %s\n\n", b)
+	if canFlush {
+		flusher.Flush()
+	}
+
+	// Proxy SSE body line-by-line from node to client.
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fmt.Fprintf(w, "%s\n", line)
+		if line == "" {
+			// Blank line = end of SSE event; flush.
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		// Stop after [DONE].
+		if strings.HasPrefix(line, "data: ") && strings.TrimPrefix(line, "data: ") == "[DONE]" {
+			break
+		}
+	}
+	return scanner.Err()
 }
 
 // transientError represents a retryable forwarding failure.
